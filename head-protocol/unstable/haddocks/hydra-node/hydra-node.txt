@@ -3905,7 +3905,10 @@ queryUTxOByTxIn :: BlockfrostOptions -> NetworkId -> [TxIn] -> BlockfrostClientT
 --   <a>ChainPoint</a>.
 queryTip :: BlockfrostClientT IO ChainPoint
 queryUTxOFor :: BlockfrostOptions -> VerificationKey PaymentKey -> BlockfrostClientT IO UTxO
-runBlockfrostM :: (MonadIO m, MonadThrow m) => Project -> BlockfrostClientT IO a -> m a
+runBlockfrostM :: (MonadIO m, MonadThrow m, HasCallStack) => Project -> BlockfrostClientT IO a -> m a
+
+-- | Run Blockfrost action with optional logging description
+runBlockfrostMWithLog :: (MonadIO m, MonadThrow m, HasCallStack) => Maybe Text -> Project -> BlockfrostClientT IO a -> m a
 toCardanoNetworkId :: Integer -> NetworkId
 scriptTypeToPlutusVersion :: ScriptType -> Maybe Language
 toCardanoUTxO :: NetworkId -> TxIn -> Address -> Maybe ScriptHash -> Maybe DatumHash -> [Amount] -> Maybe InlineDatum -> BlockfrostClientT IO (UTxO' (TxOut ctx))
