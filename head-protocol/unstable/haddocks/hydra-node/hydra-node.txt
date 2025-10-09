@@ -3905,10 +3905,7 @@ queryUTxOByTxIn :: BlockfrostOptions -> NetworkId -> [TxIn] -> BlockfrostClientT
 --   <a>ChainPoint</a>.
 queryTip :: BlockfrostClientT IO ChainPoint
 queryUTxOFor :: BlockfrostOptions -> VerificationKey PaymentKey -> BlockfrostClientT IO UTxO
-runBlockfrostM :: (MonadIO m, MonadThrow m, HasCallStack) => Project -> BlockfrostClientT IO a -> m a
-
--- | Run Blockfrost action with optional logging description
-runBlockfrostMWithLog :: (MonadIO m, MonadThrow m, HasCallStack) => Maybe Text -> Project -> BlockfrostClientT IO a -> m a
+runBlockfrostM :: (MonadIO m, MonadThrow m) => Project -> BlockfrostClientT IO a -> m a
 toCardanoNetworkId :: Integer -> NetworkId
 scriptTypeToPlutusVersion :: ScriptType -> Maybe Language
 toCardanoUTxO :: NetworkId -> TxIn -> Address -> Maybe ScriptHash -> Maybe DatumHash -> [Amount] -> Maybe InlineDatum -> BlockfrostClientT IO (UTxO' (TxOut ctx))
@@ -4250,7 +4247,7 @@ BlockfrostConnectException :: IOException -> BlockfrostConnectException
 [$sel:ioException:BlockfrostConnectException] :: BlockfrostConnectException -> IOException
 blockfrostChain :: (MonadIO m, MonadCatch m, MonadAsync m, MonadDelay m, MonadLabelledSTM m) => Tracer m CardanoChainLog -> TQueue m (Tx, TMVar m (Maybe (PostTxError Tx))) -> Project -> ChainPoint -> ChainSyncHandler m -> TinyWallet m -> m ()
 blockfrostChainFollow :: forall m. (MonadIO m, MonadCatch m, MonadDelay m, MonadLabelledSTM m) => Tracer m CardanoChainLog -> Project -> ChainPoint -> ChainSyncHandler m -> TinyWallet m -> m ()
-rollForward :: (MonadIO m, MonadThrow m, MonadDelay m) => Tracer m CardanoChainLog -> Project -> ChainSyncHandler m -> TinyWallet m -> Integer -> BlockHash -> m BlockHash
+rollForward :: (MonadIO m, MonadThrow m) => Tracer m CardanoChainLog -> Project -> ChainSyncHandler m -> TinyWallet m -> Integer -> BlockHash -> m BlockHash
 blockfrostSubmissionClient :: forall m. (MonadIO m, MonadDelay m, MonadSTM m) => Project -> Tracer m CardanoChainLog -> TQueue m (Tx, TMVar m (Maybe (PostTxError Tx))) -> m ()
 toChainPoint :: Block -> ChainPoint
 data APIBlockfrostError
