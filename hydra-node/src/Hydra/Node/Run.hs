@@ -124,11 +124,11 @@ run opts = do
               (wireNetworkInput wetHydraNode)
               $ \network -> do
                 -- Start periodic garbage collection thread
-                void $ async $ periodicGC tracer
-                -- Main loop
-                connect chain network server wetHydraNode
-                  <&> addEventSink apiSink
-                    >>= runHydraNode
+                withAsyncLabelled ("periodic-gc", periodicGC tracer) $ \_ -> do
+                  -- Main loop
+                  connect chain network server wetHydraNode
+                    <&> addEventSink apiSink
+                      >>= runHydraNode
  where
   addEventSink :: EventSink (StateEvent tx) m -> HydraNode tx m -> HydraNode tx m
   addEventSink sink node = node{eventSinks = sink : eventSinks node}
