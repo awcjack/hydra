@@ -161,9 +161,9 @@ data CoordinatedHeadState tx = CoordinatedHeadState
   , allTxs :: !(Map.Map (TxIdType tx) tx)
   -- ^ Map containing all the transactions ever seen by this node and not yet
   -- included in a snapshot. Spec: Tall
-  , confirmedSnapshot :: !ConfirmedSnapshot tx
+  , confirmedSnapshot :: !(ConfirmedSnapshot tx)
   -- ^ The latest confirmed snapshot. Spec: S̅
-  , seenSnapshot :: !SeenSnapshot tx
+  , seenSnapshot :: !(SeenSnapshot tx)
   -- ^ Last seen snapshot and signatures accumulator. Spec: Û, ŝ and Σ̂
   , currentDepositTxId :: !(Maybe (TxIdType tx))
   -- ^ Current/next deposit to incrementally commit. Spec: Uα
