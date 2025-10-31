@@ -94,6 +94,7 @@ import Network.GRPC.Etcd (
   Compare'CompareTarget (..),
   KV,
   Lease,
+  Maintenance,
   Watch,
  )
 import Network.Socket (PortNumber)
@@ -152,19 +153,23 @@ withEtcdNetwork tracer protocolVersion config callback action = do
                     ("etcd-pollConnectivity", pollConnectivity tracer conn advertise callback)
                     ( "etcd-callback-3"
                     , raceLabelled_
-                        ("etcd-waitMessages", waitMessages tracer conn persistenceDir callback)
-                        ( "etcd-callback-4"
-                        , do
-                            queue <- newPersistentQueue (persistenceDir </> "pending-broadcast") 100
-                            raceLabelled_
-                              ("etcd-broadcastMessages", broadcastMessages tracer config advertise queue)
-                              ( "etcd-network-component-action"
-                              , do
-                                  action
-                                    Network
-                                      { broadcast = writePersistentQueue queue
-                                      }
-                              )
+                        ("etcd-periodicDefrag", periodicDefrag tracer conn)
+                        ( "etcd-callback-3a"
+                        , raceLabelled_
+                            ("etcd-waitMessages", waitMessages tracer conn persistenceDir callback)
+                            ( "etcd-callback-4"
+                            , do
+                                queue <- newPersistentQueue (persistenceDir </> "pending-broadcast") 100
+                                raceLabelled_
+                                  ("etcd-broadcastMessages", broadcastMessages tracer config advertise queue)
+                                  ( "etcd-network-component-action"
+                                  , do
+                                      action
+                                        Network
+                                          { broadcast = writePersistentQueue queue
+                                          }
+                                  )
+                            )
                         )
                     )
           )
@@ -528,6 +533,27 @@ pollConnectivity tracer conn advertise NetworkCallback{onConnectivity} = do
           pure Nothing
         Right x -> pure $ Just x
 
+-- | Periodically defragment the etcd database to reclaim memory from in-memory structures.
+--
+-- This runs in the background and defragments every 6 hours. Defragmentation is
+-- safe to run on live clusters and helps prevent unbounded memory growth in etcd's
+-- internal structures (watch streams, gRPC buffers, event caches).
+periodicDefrag ::
+  Tracer IO EtcdLog ->
+  Connection ->
+  IO ()
+periodicDefrag tracer conn = withGrpcContext "periodicDefrag" . forever $ do
+  -- Wait 6 hours between defragmentation runs
+  -- First run happens 6 hours after node startup to avoid impact during initialization
+  threadDelay (600)
+  traceWith tracer DefragmentationStarted
+  result <- try $ nonStreaming conn (rpc @(Protobuf Maintenance "defragment")) defMessage
+  case result of
+    Left (e :: GrpcException) ->
+      traceWith tracer DefragmentationFailed{reason = show e}
+    Right _ ->
+      traceWith tracer DefragmentationCompleted
+
 -- | Add context to the 'grpcErrorMessage' of any 'GrpcException' raised.
 withGrpcContext :: MonadCatch m => Text -> m a -> m a
 withGrpcContext context action =
@@ -645,5 +671,8 @@ data EtcdLog
   | MatchingProtocolVersion {version :: ProtocolVersion}
   | WatchMessagesStartRevision {startRevision :: Int64}
   | WatchMessagesFallbackTo {compactRevision :: Int64}
+  | DefragmentationStarted
+  | DefragmentationCompleted
+  | DefragmentationFailed {reason :: String}
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToJSON, FromJSON)
