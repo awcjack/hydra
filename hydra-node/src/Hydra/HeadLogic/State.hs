@@ -6,7 +6,7 @@ module Hydra.HeadLogic.State where
 
 import Hydra.Prelude
 
-import Data.Map qualified as Map
+import Data.Map.Strict qualified as Map
 import Hydra.Chain.ChainState (IsChainState (..))
 import Hydra.Tx (
   HeadId,
@@ -151,26 +151,26 @@ instance (ArbitraryIsTx tx, Arbitrary (ChainStateType tx)) => Arbitrary (OpenSta
 
 -- | Off-chain state of the Coordinated Head protocol.
 data CoordinatedHeadState tx = CoordinatedHeadState
-  { localUTxO :: UTxOType tx
+  { localUTxO :: !(UTxOType tx)
   -- ^ The latest UTxO resulting from applying 'localTxs' to
   -- 'confirmedSnapshot'. Spec: L̂
-  , localTxs :: [tx]
+  , localTxs :: ![tx]
   -- ^ List of transactions applied locally and pending inclusion in a snapshot.
   -- Ordering in this list is important as transactions are added in order of
   -- application. Spec: T̂
   , allTxs :: !(Map.Map (TxIdType tx) tx)
   -- ^ Map containing all the transactions ever seen by this node and not yet
   -- included in a snapshot. Spec: Tall
-  , confirmedSnapshot :: ConfirmedSnapshot tx
+  , confirmedSnapshot :: !ConfirmedSnapshot tx
   -- ^ The latest confirmed snapshot. Spec: S̅
-  , seenSnapshot :: SeenSnapshot tx
+  , seenSnapshot :: !SeenSnapshot tx
   -- ^ Last seen snapshot and signatures accumulator. Spec: Û, ŝ and Σ̂
-  , currentDepositTxId :: Maybe (TxIdType tx)
+  , currentDepositTxId :: !(Maybe (TxIdType tx))
   -- ^ Current/next deposit to incrementally commit. Spec: Uα
   -- TODO: update in spec: Uα -> tx^#α
-  , decommitTx :: Maybe tx
+  , decommitTx :: !(Maybe tx)
   -- ^ Pending decommit transaction. Spec: txω
-  , version :: SnapshotVersion
+  , version :: !SnapshotVersion
   -- ^ Last open state version as observed on chain. Spec: ̂v
   }
   deriving stock (Generic)
