@@ -1,6 +1,7 @@
 module Hydra.Node.Run where
 
 import Hydra.Prelude hiding (fromList)
+import System.Mem (performGC)
 
 import Cardano.Ledger.BaseTypes (Globals (..), boundRational, mkActiveSlotCoeff, unNonZero)
 import Cardano.Ledger.Shelley.API (computeRandomnessStabilisationWindow, computeStabilityWindow)
@@ -122,6 +123,8 @@ run opts = do
               networkConfiguration
               (wireNetworkInput wetHydraNode)
               $ \network -> do
+                -- Start periodic garbage collection thread
+                void $ async $ periodicGC tracer
                 -- Main loop
                 connect chain network server wetHydraNode
                   <&> addEventSink apiSink
@@ -226,6 +229,15 @@ newGlobals genesisParameters = do
     , protocolParamEpochLength
     , protocolParamSlotLength
     } = genesisParameters
+
   -- NOTE: uses fixed epoch info for our L2 ledger
   epochInfo = fixedEpochInfo protocolParamEpochLength slotLength
   slotLength = mkSlotLength protocolParamSlotLength
+
+-- | Perform garbage collection periodically to manage memory usage
+periodicGC :: Tracer IO (HydraLog Tx) -> IO ()
+periodicGC tracer = forever $ do
+  traceWith tracer PerformingGarbageCollection
+  performGC
+  -- Wait 10 minutes before next GC
+  threadDelay (10 * 60 * 1000000)  -- 10 minutes in microseconds
