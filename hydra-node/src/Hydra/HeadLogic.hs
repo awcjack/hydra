@@ -1666,15 +1666,10 @@ aggregate st = \case
   SnapshotConfirmed{snapshot, signatures} ->
     case st of
       Open os@OpenState{coordinatedHeadState} ->
-        let cleanedAllTxs = foldr Map.delete allTxs confirmedTxIds
+        let Snapshot{number} = snapshot
             sizeBefore = Map.size allTxs
-            sizeAfter = Map.size cleanedAllTxs
-            numCleaned = sizeBefore - sizeAfter
-            logMsg = "SnapshotConfirmed: allTxs cleanup - snapshot=" <> show number
-                     <> ", before=" <> show sizeBefore
-                     <> ", cleaned=" <> show numCleaned
-                     <> ", after=" <> show sizeAfter
-                     <> ", confirmedTxIds=" <> show confirmedTxIds
+            logMsg = "SnapshotConfirmed: allTxs size=" <> show sizeBefore
+                     <> ", snapshot=" <> show number
         in trace logMsg $
           Open
             os
@@ -1686,12 +1681,9 @@ aggregate st = \case
                           , signatures
                           }
                     , seenSnapshot = LastSeenSnapshot number
-                    , allTxs = cleanedAllTxs
                     }
               }
        where
-        Snapshot{number, confirmed = confirmedTxs} = snapshot
-        confirmedTxIds = txId <$> confirmedTxs
         CoordinatedHeadState{allTxs} = coordinatedHeadState
       _otherState -> st
   LocalStateCleared{snapshotNumber} ->
