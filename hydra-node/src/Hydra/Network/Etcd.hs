@@ -543,14 +543,14 @@ periodicDefrag ::
   Connection ->
   IO ()
 periodicDefrag tracer conn = withGrpcContext "periodicDefrag" . forever $ do
-  -- Wait 6 hours between defragmentation runs
-  -- First run happens 6 hours after node startup to avoid impact during initialization
-  threadDelay (600)
+  -- Wait 10 minutes between defragmentation runs (for testing - production should use 3600 * 6)
+  -- First run happens 10 minutes after node startup to avoid impact during initialization
+  threadDelay (60 * 10)
   traceWith tracer DefragmentationStarted
   result <- try $ nonStreaming conn (rpc @(Protobuf Maintenance "defragment")) defMessage
   case result of
     Left (e :: GrpcException) ->
-      traceWith tracer DefragmentationFailed{reason = show e}
+      traceWith tracer DefragmentationFailed{reason = T.pack (show e)}
     Right _ ->
       traceWith tracer DefragmentationCompleted
 
@@ -673,6 +673,6 @@ data EtcdLog
   | WatchMessagesFallbackTo {compactRevision :: Int64}
   | DefragmentationStarted
   | DefragmentationCompleted
-  | DefragmentationFailed {reason :: String}
+  | DefragmentationFailed {reason :: Text}
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToJSON, FromJSON)
