@@ -25,6 +25,7 @@ data HydraLog tx
   | NodeOptions {runOptions :: RunOptions}
   | Persistence {persistenceLog :: PersistenceLog}
   | EnteringMainloop
+  | PerformingGarbageCollection
   deriving stock (Generic)
 
 deriving stock instance Eq (HydraNodeLog tx) => Eq (HydraLog tx)
