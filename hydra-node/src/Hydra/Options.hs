@@ -250,6 +250,7 @@ instance Arbitrary RunOptions where
     ledgerConfig <- arbitrary
     whichEtcd <- arbitrary
     apiTransactionTimeout <- arbitrary
+    gcIntervalMinutes <- oneof [pure Nothing, Just <$> choose (0, 60)]
     pure $
       RunOptions
         { verbosity
@@ -270,6 +271,7 @@ instance Arbitrary RunOptions where
         , ledgerConfig
         , whichEtcd
         , apiTransactionTimeout
+        , gcIntervalMinutes
         }
 
   shrink = genericShrink
