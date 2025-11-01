@@ -123,9 +123,22 @@ run opts = do
               networkConfiguration
               (wireNetworkInput wetHydraNode)
               $ \network -> do
-                -- Start periodic garbage collection thread
-                withAsyncLabelled ("periodic-gc", periodicGC tracer) $ \_ -> do
-                  -- Main loop
+                -- Start periodic garbage collection thread (if enabled)
+                case gcIntervalMinutes of
+                  Nothing -> do
+                    -- Periodic GC disabled
+                    connect chain network server wetHydraNode
+                      <&> addEventSink apiSink
+                        >>= runHydraNode
+                  Just 0 -> do
+                    -- Periodic GC disabled (0 means disabled)
+                    connect chain network server wetHydraNode
+                      <&> addEventSink apiSink
+                        >>= runHydraNode
+                  Just interval ->
+                    -- Start periodic GC with configured interval
+                    withAsyncLabelled ("periodic-gc", periodicGC tracer interval) $ \_ -> do
+                      -- Main loop
                   connect chain network server wetHydraNode
                     <&> addEventSink apiSink
                       >>= runHydraNode
@@ -175,6 +188,7 @@ run opts = do
     , tlsKeyPath
     , whichEtcd
     , apiTransactionTimeout
+    , gcIntervalMinutes
     } = opts
 
 getGlobalsForChain :: ChainConfig -> IO Globals
@@ -235,9 +249,9 @@ newGlobals genesisParameters = do
   slotLength = mkSlotLength protocolParamSlotLength
 
 -- | Perform garbage collection periodically to manage memory usage
-periodicGC :: Tracer IO (HydraLog Tx) -> IO ()
-periodicGC tracer = forever $ do
+periodicGC :: Tracer IO (HydraLog Tx) -> Natural -> IO ()
+periodicGC tracer intervalMinutes = forever $ do
   traceWith tracer PerformingGarbageCollection
   performGC
-  -- Wait 10 minutes before next GC
-  threadDelay (10 * 60 * 1000000)  -- 10 minutes in microseconds
+  -- Wait for configured interval before next GC
+  threadDelay (fromIntegral intervalMinutes * 60 * 1000000)  -- Convert minutes to microseconds
