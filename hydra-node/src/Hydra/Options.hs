@@ -250,7 +250,7 @@ instance Arbitrary RunOptions where
     ledgerConfig <- arbitrary
     whichEtcd <- arbitrary
     apiTransactionTimeout <- arbitrary
-    gcIntervalMinutes <- oneof [pure Nothing, Just <$> choose (0, 60)]
+    gcIntervalMinutes <- oneof [pure Nothing, Just . fromInteger <$> choose (0, 60)]
     pure $
       RunOptions
         { verbosity
