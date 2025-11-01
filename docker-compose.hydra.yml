@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  hydra-node:
+    image: hydra-node:latest
+    container_name: hydra-node
+    restart: unless-stopped
+
+    # Run with configured GC interval (10 minutes by default)
+    command: [
+      "--node-id", "1",
+      "--api-host", "0.0.0.0",
+      "--api-port", "4001",
+      "--host", "0.0.0.0",
+      "--port", "5001",
+      "--monitoring-port", "6001",
+      "--persistence-dir", "/data/persistence",
+      "--gc-interval", "10",  # Periodic GC every 10 minutes
+      # Add other required options here:
+      # "--hydra-signing-key", "/keys/hydra.sk",
+      # "--hydra-verification-key", "/keys/hydra.vk",
+      # "--cardano-signing-key", "/keys/cardano.sk",
+      # "--cardano-verification-key", "/keys/cardano.vk",
+      # "--ledger-protocol-parameters", "/config/protocol-parameters.json",
+      # "--testnet-magic", "42",
+      # "--node-socket", "/ipc/node.socket",
+      # "--start-chain-from", "0"
+    ]
+
+    ports:
+      - "4001:4001"  # API port
+      - "5001:5001"  # Node-to-node communication
+      - "6001:6001"  # Monitoring/metrics port
+
+    volumes:
+      - hydra-data:/data
+      - ./keys:/keys:ro              # Mount keys directory (read-only)
+      - ./config:/config:ro           # Mount configuration files
+      # - cardano-ipc:/ipc            # For connecting to Cardano node
+
+    environment:
+      - HYDRA_LOG_LEVEL=info
+      - TZ=UTC
+
+    networks:
+      - hydra-network
+
+    # Resource limits to prevent memory issues
+    deploy:
+      resources:
+        limits:
+          memory: 1G          # Limit to 1GB (should use much less with fixes)
+        reservations:
+          memory: 256M        # Reserve 256MB
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4001/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Optional: Cardano node for development/testing
+  # cardano-node:
+  #   image: inputoutput/cardano-node:latest
+  #   container_name: cardano-node
+  #   restart: unless-stopped
+  #   volumes:
+  #     - cardano-data:/data
+  #     - cardano-ipc:/ipc
+  #   networks:
+  #     - hydra-network
+
+volumes:
+  hydra-data:
+    driver: local
+  # cardano-data:
+  #   driver: local
+  # cardano-ipc:
+  #   driver: local
+
+networks:
+  hydra-network:
+    driver: bridge

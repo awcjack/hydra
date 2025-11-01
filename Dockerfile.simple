@@ -1,0 +1,50 @@
+# Simple Dockerfile for Hydra Node using pre-built binary
+# This requires the hydra-node binary to be built separately
+FROM ubuntu:22.04
+
+# Install runtime dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        jq \
+        libgmp10 \
+        libsodium23 \
+        libsecp256k1-1 \
+        libssl3 \
+        liblzma5 \
+        zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for running the node
+RUN useradd -m -u 1000 -s /bin/bash hydra
+
+# Copy the locally built hydra-node binary
+# You need to build this first with: nix build .#hydra-node
+COPY result/bin/hydra-node /usr/local/bin/hydra-node
+RUN chmod +x /usr/local/bin/hydra-node
+
+# Set up working directory
+WORKDIR /data
+RUN chown hydra:hydra /data
+
+# Switch to non-root user
+USER hydra
+
+# Default ports used by Hydra node
+# API port
+EXPOSE 4001
+# Metrics port
+EXPOSE 6001
+# Node-to-node communication port
+EXPOSE 5001
+
+# Health check
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:4001/healthcheck || exit 1
+
+# Set entrypoint to hydra-node binary
+ENTRYPOINT ["hydra-node"]
+
+# Default command shows help
+CMD ["--help"]
