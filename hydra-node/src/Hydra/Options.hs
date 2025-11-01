@@ -212,6 +212,8 @@ data RunOptions = RunOptions
   , ledgerConfig :: LedgerConfig
   , whichEtcd :: WhichEtcd
   , apiTransactionTimeout :: ApiTransactionTimeout
+  , gcIntervalMinutes :: Maybe Natural
+  -- ^ Periodic garbage collection interval in minutes. Nothing disables periodic GC.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToJSON, FromJSON)
@@ -294,6 +296,7 @@ defaultRunOptions =
     , ledgerConfig = defaultLedgerConfig
     , whichEtcd = EmbeddedEtcd
     , apiTransactionTimeout = 300
+    , gcIntervalMinutes = Just 10  -- Default to 10 minutes
     }
  where
   localhost = IPv4 $ toIPv4 [127, 0, 0, 1]
@@ -320,6 +323,7 @@ runOptionsParser =
     <*> ledgerConfigParser
     <*> whichEtcdParser
     <*> apiTransactionTimeoutParser
+    <*> optional gcIntervalParser
 
 whichEtcdParser :: Parser WhichEtcd
 whichEtcdParser =
@@ -810,6 +814,20 @@ apiTransactionTimeoutParser =
         <> help
           "Timeout for API transactions in seconds. If a transaction \
           \takes longer than this, it will be cancelled."
+    )
+
+gcIntervalParser :: Parser Natural
+gcIntervalParser =
+  option
+    auto
+    ( long "gc-interval"
+        <> metavar "MINUTES"
+        <> value 10
+        <> showDefault
+        <> completer (listCompleter ["5", "10", "15", "30", "60"])
+        <> help
+          "Interval for periodic garbage collection in minutes. \
+          \Set to 0 to disable periodic GC."
     )
 
 startChainFromParser :: Parser ChainPoint
