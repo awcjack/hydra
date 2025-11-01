@@ -216,7 +216,7 @@ onInitialChainCommitTx st newChainState pt utxo =
 
   remainingParties = Set.delete pt pendingCommits
 
-  newCommitted = Map.insert pt utxo committed
+  !newCommitted = Map.insert pt utxo committed
 
   InitialState{pendingCommits, committed, headId, parameters} = st
 
@@ -371,7 +371,7 @@ onOpenNetworkReqTx env ledger currentSlot st ttl tx =
 
   -- NOTE: Order of transactions is important here. See also
   -- 'pruneTransactions'.
-  localTxs' = localTxs <> [tx]
+  !localTxs' = localTxs <> [tx]
 
 -- | Process a snapshot request ('ReqSn') from party.
 --
@@ -505,10 +505,11 @@ onOpenNetworkReqSn env ledger pendingDeposits currentSlot st otherParty sv sn re
                 if sv == confVersion && isJust confUTxOToCommit
                   then
                     if confUTxOToCommit == Just deposited
-                      then cont (activeUTxOAfterDecommit <> deposited, confUTxOToCommit)
+                      then let !mergedUTxO = activeUTxOAfterDecommit <> deposited
+                           in cont (mergedUTxO, confUTxOToCommit)
                       else Error $ RequireFailed ReqSnCommitNotSettled
                   else do
-                    let activeUTxOAfterCommit = activeUTxOAfterDecommit <> deposited
+                    let !activeUTxOAfterCommit = activeUTxOAfterDecommit <> deposited
                     cont (activeUTxOAfterCommit, Just deposited)
 
   requireApplicableDecommitTx cont =
@@ -557,7 +558,7 @@ onOpenNetworkReqSn env ledger pendingDeposits currentSlot st otherParty sv sn re
       -- here when a tx becomes invalid.
       case applyTransactions ledger currentSlot u [tx] of
         Left (_, _) -> (txs, u)
-        Right u' -> (txs <> [tx], u')
+        Right u' -> let !txs' = txs <> [tx] in (txs', u')
 
   confSn = case confirmedSnapshot of
     InitialSnapshot{} -> 0
@@ -665,7 +666,7 @@ onOpenNetworkAckSn Environment{party} pendingDeposits openState otherParty snaps
       else Error $ RequireFailed $ SnapshotAlreadySigned{knownSignatures = Map.keys sigs, receivedSignature = otherParty}
 
   ifAllMembersHaveSigned snapshot sigs cont =
-    let sigs' = Map.insert otherParty snapshotSignature sigs
+    let !sigs' = Map.insert otherParty snapshotSignature sigs
      in if Map.keysSet sigs' == Set.fromList parties
           then cont sigs'
           else
@@ -951,8 +952,8 @@ onChainTick :: IsTx tx => Environment -> PendingDeposits tx -> UTCTime -> Outcom
 onChainTick env pendingDeposits chainTime =
   -- Determine new active and new expired
   let nextDeposits = determineNextDepositStatus env pendingDeposits chainTime
-      newActive = Map.filter (\Deposit{status} -> status == Active) nextDeposits
-      newExpired = Map.filter (\Deposit{status} -> status == Expired) nextDeposits
+      !newActive = Map.filter (\Deposit{status} -> status == Active) nextDeposits
+      !newExpired = Map.filter (\Deposit{status} -> status == Expired) nextDeposits
    in -- Emit state change for both
       -- XXX: This is a bit messy
       mkDepositActivated newActive <> mkDepositExpired newExpired
@@ -973,8 +974,8 @@ onOpenChainTick :: IsTx tx => Environment -> UTCTime -> PendingDeposits tx -> Op
 onOpenChainTick env chainTime pendingDeposits st =
   -- Determine new active and new expired
   let nextDeposits = determineNextDepositStatus env pendingDeposits chainTime
-      newActive = Map.filter (\Deposit{status} -> status == Active) nextDeposits
-      newExpired = Map.filter (\Deposit{status} -> status == Expired) nextDeposits
+      !newActive = Map.filter (\Deposit{status} -> status == Active) nextDeposits
+      !newExpired = Map.filter (\Deposit{status} -> status == Expired) nextDeposits
    in -- Apply state changes and pick next active to request snapshot
       -- XXX: This is smelly as we rely on Map <> to override entries (left
       -- biased). This is also weird because we want to actually apply the state
@@ -1457,13 +1458,17 @@ aggregateNodeState nodeState sc =
         HeadOpened{chainState} ->
           ns{pendingDeposits, currentSlot = chainStateSlot chainState}
         DepositRecorded{headId, depositTxId, deposited, created, deadline} ->
-          ns{pendingDeposits = Map.insert depositTxId Deposit{headId, deposited, created, deadline, status = Inactive} pendingDeposits}
+          let !pd = Map.insert depositTxId Deposit{headId, deposited, created, deadline, status = Inactive} pendingDeposits
+          in ns{pendingDeposits = pd}
         DepositActivated{depositTxId, deposit} ->
-          ns{pendingDeposits = Map.insert depositTxId deposit pendingDeposits}
+          let !pd = Map.insert depositTxId deposit pendingDeposits
+          in ns{pendingDeposits = pd}
         DepositExpired{depositTxId, deposit} ->
-          ns{pendingDeposits = Map.insert depositTxId deposit pendingDeposits}
+          let !pd = Map.insert depositTxId deposit pendingDeposits
+          in ns{pendingDeposits = pd}
         DepositRecovered{depositTxId} ->
-          ns{pendingDeposits = Map.delete depositTxId pendingDeposits}
+          let !updatedDeposits = Map.delete depositTxId pendingDeposits
+          in ns{pendingDeposits = updatedDeposits}
         CommitFinalized{chainState, newVersion, depositTxId} ->
           case st of
             Open
@@ -1481,17 +1486,16 @@ aggregateNodeState nodeState sc =
                                     , -- NOTE: This must correspond to the just finalized
                                       -- depositTxId, but we should not verify this here.
                                       currentDepositTxId = Nothing
-                                    , localUTxO = localUTxO <> newUTxO
+                                    , localUTxO = localUTxO `seq` newUTxO `seq` (localUTxO <> newUTxO)
                                     }
                               }
-                      , pendingDeposits = Map.delete depositTxId pendingDeposits
+                      , pendingDeposits = let !pd = Map.delete depositTxId pendingDeposits in pd
                       }
                where
                 CoordinatedHeadState{localUTxO} = coordinatedHeadState
             _otherState ->
-              ns
-                { pendingDeposits = Map.delete depositTxId pendingDeposits
-                }
+              let !pd = Map.delete depositTxId pendingDeposits
+              in ns { pendingDeposits = pd }
         TickObserved{chainSlot} ->
           ns{currentSlot = chainSlot}
         ChainRolledBack{chainState} ->
@@ -1532,7 +1536,7 @@ aggregate st = \case
             , headSeed
             }
        where
-        newCommitted = Map.insert party committedUTxO committed
+        !newCommitted = Map.insert party committedUTxO committed
         remainingParties = Set.delete party pendingCommits
       _otherState -> st
   HeadAborted{chainState} ->
