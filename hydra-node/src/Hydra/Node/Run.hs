@@ -139,9 +139,9 @@ run opts = do
                     -- Start periodic GC with configured interval
                     withAsyncLabelled ("periodic-gc", periodicGC tracer interval) $ \_ -> do
                       -- Main loop
-                  connect chain network server wetHydraNode
-                    <&> addEventSink apiSink
-                      >>= runHydraNode
+                      connect chain network server wetHydraNode
+                        <&> addEventSink apiSink
+                        >>= runHydraNode
  where
   addEventSink :: EventSink (StateEvent tx) m -> HydraNode tx m -> HydraNode tx m
   addEventSink sink node = node{eventSinks = sink : eventSinks node}
