@@ -22,7 +22,6 @@ module Hydra.HeadLogic (
 
 import Hydra.Prelude
 
-import Cardano.Api.UTxO qualified as UTxO
 import Data.List (elemIndex, minimumBy)
 import Data.Map.Strict qualified as Map
 import Data.Set ((\\))
@@ -1623,7 +1622,7 @@ aggregate st = \case
           let txOutputs = utxoFromTx candidateTx
               -- Compute intersection: outputs that are still in newLocalUTxO
               stillUnspent = txOutputs `withoutUTxO` (txOutputs `withoutUTxO` newLocalUTxO)
-          in not $ UTxO.null stillUnspent
+          in stillUnspent /= mempty
       _otherState -> st
   SnapshotRequestDecided{snapshotNumber} ->
     case st of
