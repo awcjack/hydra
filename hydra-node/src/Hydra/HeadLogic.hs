@@ -22,6 +22,7 @@ module Hydra.HeadLogic (
 
 import Hydra.Prelude
 
+import Cardano.Api.UTxO qualified as UTxO
 import Data.List (elemIndex, minimumBy)
 import Data.Map.Strict qualified as Map
 import Data.Set ((\\))
@@ -1590,18 +1591,39 @@ aggregate st = \case
     case st of
       Open os@OpenState{coordinatedHeadState} ->
         let !updatedLocalTxs = localTxs <> [tx]
-        in Open
-          os
-            { coordinatedHeadState =
-                coordinatedHeadState
-                  { localUTxO = newLocalUTxO
-                  , -- NOTE: Order of transactions is important here. See also
-                    -- 'pruneTransactions'.
-                    localTxs = updatedLocalTxs
-                  }
-            }
+            -- Cleanup: Remove transactions whose outputs are fully consumed
+            -- A transaction is fully consumed when none of its outputs remain in newLocalUTxO
+            !cleanedAllTxs = Map.filter isNotFullyConsumed allTxs
+            sizeBefore = Map.size allTxs
+            sizeAfter = Map.size cleanedAllTxs
+            numCleaned = sizeBefore - sizeAfter
+            logMsg = "TransactionAppliedToLocalUTxO: allTxs cleanup - before=" <> show sizeBefore
+                     <> ", cleaned=" <> show numCleaned
+                     <> ", after=" <> show sizeAfter
+                     <> ", appliedTxId=" <> show (txId tx)
+        in trace logMsg $!
+          Open
+            os
+              { coordinatedHeadState =
+                  coordinatedHeadState
+                    { localUTxO = newLocalUTxO
+                    , -- NOTE: Order of transactions is important here. See also
+                      -- 'pruneTransactions'.
+                      localTxs = updatedLocalTxs
+                    , allTxs = cleanedAllTxs
+                    }
+              }
        where
-        CoordinatedHeadState{localTxs} = coordinatedHeadState
+        CoordinatedHeadState{localTxs, allTxs} = coordinatedHeadState
+
+        -- Check if a transaction still has unspent outputs in newLocalUTxO
+        -- We compute the intersection of tx outputs and newLocalUTxO
+        -- If intersection is not empty, some outputs are still unspent
+        isNotFullyConsumed candidateTx =
+          let txOutputs = utxoFromTx candidateTx
+              -- Compute intersection: outputs that are still in newLocalUTxO
+              stillUnspent = txOutputs `withoutUTxO` (txOutputs `withoutUTxO` newLocalUTxO)
+          in not $ UTxO.null stillUnspent
       _otherState -> st
   SnapshotRequestDecided{snapshotNumber} ->
     case st of
