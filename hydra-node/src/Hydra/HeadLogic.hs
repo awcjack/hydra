@@ -1725,31 +1725,60 @@ aggregate st = \case
   TransactionReceived{tx} ->
     case st of
       Open os@OpenState{coordinatedHeadState} ->
-        Open
-          os
-            { coordinatedHeadState =
-                coordinatedHeadState
-                  { allTxs = allTxs <> fromList [(txId tx, tx)]
-                  }
-            }
+        let !newAllTxs = allTxs <> fromList [(txId tx, tx)]
+            sizeBefore = Map.size allTxs
+            sizeAfter = Map.size newAllTxs
+            logMsg = "TransactionReceived: allTxs size - before=" <> show sizeBefore
+                     <> ", after=" <> show sizeAfter
+                     <> ", txId=" <> show (txId tx)
+        in trace logMsg $!
+          Open
+            os
+              { coordinatedHeadState =
+                  coordinatedHeadState
+                    { allTxs = newAllTxs
+                    }
+              }
        where
         CoordinatedHeadState{allTxs} = coordinatedHeadState
       _otherState -> st
   TransactionAppliedToLocalUTxO{tx, newLocalUTxO} ->
     case st of
       Open os@OpenState{coordinatedHeadState} ->
-        Open
-          os
-            { coordinatedHeadState =
-                coordinatedHeadState
-                  { localUTxO = newLocalUTxO
-                  , -- NOTE: Order of transactions is important here. See also
-                    -- 'pruneTransactions'.
-                    localTxs = localTxs <> [tx]
-                  }
-            }
+        let !updatedLocalTxs = localTxs <> [tx]
+            -- Cleanup: Remove transactions whose outputs are fully consumed
+            -- A transaction is fully consumed when none of its outputs remain in newLocalUTxO
+            !cleanedAllTxs = Map.filter isNotFullyConsumed allTxs
+            sizeBefore = Map.size allTxs
+            sizeAfter = Map.size cleanedAllTxs
+            numCleaned = sizeBefore - sizeAfter
+            logMsg = "TransactionAppliedToLocalUTxO: allTxs cleanup - before=" <> show sizeBefore
+                     <> ", cleaned=" <> show numCleaned
+                     <> ", after=" <> show sizeAfter
+                     <> ", appliedTxId=" <> show (txId tx)
+        in trace logMsg $!
+          Open
+            os
+              { coordinatedHeadState =
+                  coordinatedHeadState
+                    { localUTxO = newLocalUTxO
+                    , -- NOTE: Order of transactions is important here. See also
+                      -- 'pruneTransactions'.
+                      localTxs = updatedLocalTxs
+                    , allTxs = cleanedAllTxs
+                    }
+              }
        where
-        CoordinatedHeadState{localTxs} = coordinatedHeadState
+        CoordinatedHeadState{localTxs, allTxs} = coordinatedHeadState
+
+        -- Check if a transaction still has unspent outputs in newLocalUTxO
+        -- We compute the intersection of tx outputs and newLocalUTxO
+        -- If intersection is not empty, some outputs are still unspent
+        isNotFullyConsumed candidateTx =
+          let txOutputs = utxoFromTx candidateTx
+              -- Compute intersection: outputs that are still in newLocalUTxO
+              stillUnspent = txOutputs `withoutUTxO` (txOutputs `withoutUTxO` newLocalUTxO)
+          in stillUnspent /= mempty
       _otherState -> st
   SnapshotRequestDecided{snapshotNumber} ->
     case st of
@@ -1771,17 +1800,28 @@ aggregate st = \case
   SnapshotRequested{snapshot, requestedTxIds, newLocalUTxO, newLocalTxs, newCurrentDepositTxId} ->
     case st of
       Open os@OpenState{coordinatedHeadState} ->
-        Open
-          os
-            { coordinatedHeadState =
-                coordinatedHeadState
-                  { seenSnapshot = SeenSnapshot snapshot mempty
-                  , localTxs = newLocalTxs
-                  , localUTxO = newLocalUTxO
-                  , allTxs = foldr Map.delete allTxs requestedTxIds
-                  , currentDepositTxId = newCurrentDepositTxId
-                  }
-            }
+        let !cleanedAllTxs = foldr Map.delete allTxs requestedTxIds
+            sizeBefore = Map.size allTxs
+            sizeAfter = Map.size cleanedAllTxs
+            numCleaned = sizeBefore - sizeAfter
+            Snapshot{number} = snapshot
+            logMsg = "SnapshotRequested (LEADER): allTxs cleanup - snapshot=" <> show number
+                     <> ", before=" <> show sizeBefore
+                     <> ", cleaned=" <> show numCleaned
+                     <> ", after=" <> show sizeAfter
+                     <> ", requestedTxIds=" <> show requestedTxIds
+        in trace logMsg $!
+          Open
+            os
+              { coordinatedHeadState =
+                  coordinatedHeadState
+                    { seenSnapshot = SeenSnapshot snapshot mempty
+                    , localTxs = newLocalTxs
+                    , localUTxO = newLocalUTxO
+                    , allTxs = cleanedAllTxs
+                    , currentDepositTxId = newCurrentDepositTxId
+                    }
+              }
        where
         CoordinatedHeadState{allTxs} = coordinatedHeadState
       _otherState -> st
@@ -1794,13 +1834,14 @@ aggregate st = \case
               { seenSnapshot = ss@SeenSnapshot{signatories}
               }
           } ->
-          Open
+          let !updatedSignatories = Map.insert party signature signatories
+          in Open
             os
               { coordinatedHeadState =
                   chs
                     { seenSnapshot =
                         ss
-                          { signatories = Map.insert party signature signatories
+                          { signatories = updatedSignatories
                           }
                     }
               }
@@ -1826,22 +1867,24 @@ aggregate st = \case
   LocalStateCleared{snapshotNumber} ->
     case st of
       Open os@OpenState{coordinatedHeadState = coordinatedHeadState@CoordinatedHeadState{confirmedSnapshot}} ->
-        Open
+        let !emptyTxs = mempty
+            !emptyAllTxs = mempty
+        in Open
           os
             { coordinatedHeadState =
                 case confirmedSnapshot of
                   InitialSnapshot{initialUTxO} ->
                     coordinatedHeadState
                       { localUTxO = initialUTxO
-                      , localTxs = mempty
-                      , allTxs = mempty
+                      , localTxs = emptyTxs
+                      , allTxs = emptyAllTxs
                       , seenSnapshot = NoSeenSnapshot
                       }
                   ConfirmedSnapshot{snapshot = Snapshot{utxo}} ->
                     coordinatedHeadState
                       { localUTxO = utxo
-                      , localTxs = mempty
-                      , allTxs = mempty
+                      , localTxs = emptyTxs
+                      , allTxs = emptyAllTxs
                       , seenSnapshot = LastSeenSnapshot snapshotNumber
                       }
             }
@@ -1938,7 +1981,8 @@ aggregate st = \case
   IgnoredHeadInitializing{} -> st
   TxInvalid{transaction} -> case st of
     Open ost@OpenState{coordinatedHeadState = coordState@CoordinatedHeadState{allTxs = allTransactions}} ->
-      Open ost{coordinatedHeadState = coordState{allTxs = foldr Map.delete allTransactions [txId transaction]}}
+      let !cleanedTxs = foldr Map.delete allTransactions [txId transaction]
+      in Open ost{coordinatedHeadState = coordState{allTxs = cleanedTxs}}
     _otherState -> st
   Checkpoint nodeState -> headState nodeState
   NodeSynced -> st
