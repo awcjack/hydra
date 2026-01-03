@@ -39,6 +39,11 @@ import Hydra.Chain (
   rollbackHistory,
  )
 import Hydra.Chain.ChainState (ChainSlot, IsChainState (..))
+import Hydra.DatumCache (
+  DatumCache,
+  HasDatumCache (..),
+  restoreDatums,
+ )
 import Hydra.HeadLogic.Error (
   LogicError (..),
   RequirementFailure (..),
@@ -293,7 +298,7 @@ onOpenClientNewTx tx =
 --
 -- __Transition__: 'OpenState' → 'OpenState'
 onOpenNetworkReqTx ::
-  IsTx tx =>
+  (IsTx tx, HasDatumCache (UTxOType tx)) =>
   Environment ->
   Ledger tx ->
   ChainSlot ->
@@ -306,7 +311,7 @@ onOpenNetworkReqTx env ledger currentSlot st ttl tx =
   -- Keep track of transactions by-id
   (newState TransactionReceived{tx} <>) $
     -- Spec: wait L̂ ◦ tx ≠ ⊥
-    waitApplyTx $ \newLocalUTxO ->
+    waitApplyTx $ \ !newLocalUTxO ->
       -- Spec: T̂ ← T̂ ⋃ {tx}
       --       L̂  ← L̂ ◦ tx
       newState TransactionAppliedToLocalUTxO{headId, tx, newLocalUTxO}
@@ -314,8 +319,13 @@ onOpenNetworkReqTx env ledger currentSlot st ttl tx =
         --         multicast (reqSn, v, ̅S.s + 1, T̂ , 𝑈𝛼, txω )
         & maybeRequestSnapshot (confirmedSn + 1)
  where
+  -- Restore inline datums before applying the transaction.
+  -- The ledger validation needs full datums to validate script execution.
+  -- After successful application, aggregate will strip datums again.
+  restoredUTxO = restoreDatums datumCache localUTxO
+
   waitApplyTx cont =
-    case applyTransactions currentSlot localUTxO [tx] of
+    case applyTransactions currentSlot restoredUTxO [tx] of
       Right utxo' -> cont utxo'
       Left (_, err)
         | ttl > 0 ->
@@ -330,7 +340,7 @@ onOpenNetworkReqTx env ledger currentSlot st ttl tx =
             -- because of network latency when receiving tx1. The leader,
             -- however, saw both as valid and requests a snapshot including
             -- both. This is a valid request and it could make the head stuck.
-            newState TxInvalid{headId, utxo = localUTxO, transaction = tx, validationError = err}
+            newState TxInvalid{headId, utxo = restoredUTxO, transaction = tx, validationError = err}
 
   maybeRequestSnapshot nextSn outcome =
     if not snapshotInFlight && isLeader parameters party nextSn
@@ -359,7 +369,7 @@ onOpenNetworkReqTx env ledger currentSlot st ttl tx =
 
   Snapshot{number = confirmedSn} = getSnapshot confirmedSnapshot
 
-  OpenState{coordinatedHeadState, headId, parameters} = st
+  OpenState{coordinatedHeadState, headId, parameters, datumCache} = st
 
   snapshotInFlight = case seenSnapshot of
     NoSeenSnapshot -> False
@@ -449,7 +459,7 @@ onOpenNetworkReqSn env ledger pendingDeposits currentSlot st otherParty sv sn re
                   --       for tx ∈ 𝑋 : L̂ ◦ tx ≠ ⊥
                   --         T̂ ← T̂ ⋃ {tx}
                   --         L̂ ← L̂ ◦ tx
-                  let (newLocalTxs, newLocalUTxO) = pruneTransactions u
+                  let (newLocalTxs, !newLocalUTxO) = pruneTransactions u
                   newState
                     SnapshotRequested
                       { snapshot = nextSnapshot
@@ -555,7 +565,7 @@ onOpenNetworkReqSn env ledger pendingDeposits currentSlot st otherParty sv sn re
       -- here when a tx becomes invalid.
       case applyTransactions ledger currentSlot u [tx] of
         Left (_, _) -> (txs, u)
-        Right u' -> (txs <> [tx], u')
+        Right !u' -> (txs <> [tx], u')
 
   confSn = case confirmedSnapshot of
     InitialSnapshot{} -> 0
@@ -844,7 +854,7 @@ onOpenNetworkReqDec ::
   Outcome tx
 onOpenNetworkReqDec env ledger ttl currentSlot openState decommitTx =
   -- Spec: wait 𝑈𝛼 = ∅ ^ txω =⊥ ∧ L̂ ◦ tx ≠ ⊥
-  waitOnApplicableDecommit $ \newLocalUTxO -> do
+  waitOnApplicableDecommit $ \ !newLocalUTxO -> do
     -- Spec: L̂ ← L̂ ◦ tx \ outputs(tx)
     let decommitUTxO = utxoFromTx decommitTx
         activeUTxO = newLocalUTxO `withoutUTxO` decommitUTxO
@@ -1085,6 +1095,7 @@ isLeader HeadParameters{parties} p sn =
 --
 -- __Transition__: 'OpenState' → 'OpenState'
 onOpenClientClose ::
+  HasDatumCache (UTxOType tx) =>
   OpenState tx ->
   Outcome tx
 onOpenClientClose st =
@@ -1100,13 +1111,16 @@ onOpenClientClose st =
             { headId
             , headParameters = parameters
             , openVersion = version
-            , closingSnapshot = confirmedSnapshot
+            -- Restore inline datums before creating on-chain transaction.
+            -- The UTxO hash computed from the snapshot must match the hash
+            -- that was signed, which includes full inline datums.
+            , closingSnapshot = restoreConfirmedSnapshotDatums datumCache confirmedSnapshot
             }
       }
  where
   CoordinatedHeadState{confirmedSnapshot, version} = coordinatedHeadState
 
-  OpenState{coordinatedHeadState, headId, parameters} = st
+  OpenState{coordinatedHeadState, headId, parameters, datumCache} = st
 
 -- | Observe a close transaction. If the closed snapshot number is smaller than
 -- our last confirmed, we post a contest transaction. Also, we do schedule a
@@ -1114,6 +1128,7 @@ onOpenClientClose st =
 --
 -- __Transition__: 'OpenState' → 'ClosedState'
 onOpenChainCloseTx ::
+  HasDatumCache (UTxOType tx) =>
   OpenState tx ->
   -- | New chain state.
   ChainStateType tx ->
@@ -1146,14 +1161,17 @@ onOpenChainCloseTx openState newChainState closedSnapshotNumber contestationDead
                     { headId
                     , headParameters
                     , openVersion = version
-                    , contestingSnapshot = confirmedSnapshot
+                    -- Restore inline datums before creating on-chain transaction.
+                    -- The UTxO hash computed from the snapshot must match the hash
+                    -- that was signed, which includes full inline datums.
+                    , contestingSnapshot = restoreConfirmedSnapshotDatums datumCache confirmedSnapshot
                     }
               }
       else outcome
 
   CoordinatedHeadState{confirmedSnapshot, version} = coordinatedHeadState
 
-  OpenState{parameters = headParameters, headId, coordinatedHeadState} = openState
+  OpenState{parameters = headParameters, headId, coordinatedHeadState, datumCache} = openState
 
 -- | Client request to side load confirmed snapshot.
 --
@@ -1356,7 +1374,7 @@ handleOutOfSync Environment{contestationPeriod} now chainTime syncStatus
 -- 'Effect's, in case it is processed successfully. Later, the Node will
 -- 'aggregate' the events, resulting in a new 'HeadState'.
 update ::
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   Environment ->
   Ledger tx ->
   -- | Current system time.
@@ -1374,7 +1392,7 @@ update env ledger now nodeState ev =
       updateSyncedHead env ledger now currentSlot pendingDeposits headState ev (syncedStatus nodeState)
 
 updateUnsyncedHead ::
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   Environment ->
   Ledger tx ->
   -- | Current system time.
@@ -1397,7 +1415,7 @@ updateUnsyncedHead env ledger now currentSlot pendingDeposits st ev syncStatus =
       wait WaitOnNodeInSync{currentSlot}
 
 updateSyncedHead ::
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   Environment ->
   Ledger tx ->
   -- | Current system time.
@@ -1422,7 +1440,7 @@ updateSyncedHead env ledger now currentSlot pendingDeposits st ev syncStatus =
 -- * Input Handlers
 
 handleChainInput ::
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   Environment ->
   Ledger tx ->
   -- | Current system time.
@@ -1514,7 +1532,7 @@ handleChainInput env _ledger now _currentSlot pendingDeposits st ev syncStatus =
     Error $ UnhandledInput ev st
 
 handleNetworkInput ::
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   Environment ->
   Ledger tx ->
   -- | Current system time.
@@ -1542,7 +1560,7 @@ handleNetworkInput env ledger _now currentSlot pendingDeposits st ev = case (st,
     Error $ UnhandledInput ev st
 
 handleClientInput ::
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   Environment ->
   Ledger tx ->
   -- | Current system time.
@@ -1588,7 +1606,7 @@ handleClientInput env ledger _now currentSlot pendingDeposits st ev = case (st, 
 -- * NodeState aggregate
 
 -- | Reflect 'StateChanged' events onto the 'NodeState' aggregateNodeState.
-aggregateNodeState :: IsChainState tx => NodeState tx -> StateChanged tx -> NodeState tx
+aggregateNodeState :: (IsChainState tx, HasDatumCache (UTxOType tx)) => NodeState tx -> StateChanged tx -> NodeState tx
 aggregateNodeState nodeState sc =
   let currentPendingDeposits = pendingDeposits nodeState
       st = aggregate (headState nodeState) sc
@@ -1621,9 +1639,12 @@ aggregateNodeState nodeState sc =
         CommitFinalized{chainState, newVersion, depositTxId} ->
           case st of
             Open
-              os@OpenState{coordinatedHeadState} ->
+              os@OpenState{coordinatedHeadState, datumCache} ->
                 let deposit = Map.lookup depositTxId currentPendingDeposits
                     newUTxO = maybe mempty (\Deposit{deposited} -> deposited) deposit
+                    -- Strip inline datums from deposited UTxO and merge with existing cache
+                    (!strippedNewUTxO, !newCache) = stripDatums newUTxO
+                    !mergedCache = datumCache <> newCache
                  in nodeState
                       { headState =
                           Open
@@ -1635,8 +1656,9 @@ aggregateNodeState nodeState sc =
                                     , -- NOTE: This must correspond to the just finalized
                                       -- depositTxId, but we should not verify this here.
                                       currentDepositTxId = Nothing
-                                    , localUTxO = localUTxO <> newUTxO
+                                    , localUTxO = localUTxO <> strippedNewUTxO
                                     }
+                              , datumCache = mergedCache
                               }
                       , pendingDeposits = Map.delete depositTxId currentPendingDeposits
                       }
@@ -1661,7 +1683,7 @@ aggregateNodeState nodeState sc =
 -- * HeadState aggregate
 
 -- | Reflect 'StateChanged' events onto the 'HeadState' aggregate.
-aggregate :: IsChainState tx => HeadState tx -> StateChanged tx -> HeadState tx
+aggregate :: (IsChainState tx, HasDatumCache (UTxOType tx)) => HeadState tx -> StateChanged tx -> HeadState tx
 aggregate st = \case
   NetworkConnected -> st
   NetworkDisconnected -> st
@@ -1703,24 +1725,28 @@ aggregate st = \case
   HeadOpened{chainState, initialUTxO} ->
     case st of
       Initial InitialState{parameters, headId, headSeed} ->
-        Open
-          OpenState
-            { parameters
-            , coordinatedHeadState =
-                CoordinatedHeadState
-                  { localUTxO = initialUTxO
-                  , allTxs = mempty
-                  , localTxs = mempty
-                  , confirmedSnapshot = InitialSnapshot{headId, initialUTxO}
-                  , seenSnapshot = NoSeenSnapshot
-                  , currentDepositTxId = Nothing
-                  , decommitTx = Nothing
-                  , version = 0
-                  }
-            , chainState
-            , headId
-            , headSeed
-            }
+        -- Strip inline datums from the initial UTxO to save memory.
+        -- The datums are stored in the cache and can be restored when needed.
+        let (!strippedUTxO, !cache) = stripDatums initialUTxO
+         in Open
+              OpenState
+                { parameters
+                , coordinatedHeadState =
+                    CoordinatedHeadState
+                      { localUTxO = strippedUTxO
+                      , allTxs = mempty
+                      , localTxs = mempty
+                      , confirmedSnapshot = InitialSnapshot{headId, initialUTxO = strippedUTxO}
+                      , seenSnapshot = NoSeenSnapshot
+                      , currentDepositTxId = Nothing
+                      , decommitTx = Nothing
+                      , version = 0
+                      }
+                , chainState
+                , headId
+                , headSeed
+                , datumCache = cache
+                }
       _otherState -> st
   TransactionReceived{tx} ->
     case st of
@@ -1737,17 +1763,22 @@ aggregate st = \case
       _otherState -> st
   TransactionAppliedToLocalUTxO{tx, newLocalUTxO} ->
     case st of
-      Open os@OpenState{coordinatedHeadState} ->
-        Open
-          os
-            { coordinatedHeadState =
-                coordinatedHeadState
-                  { localUTxO = newLocalUTxO
-                  , -- NOTE: Order of transactions is important here. See also
-                    -- 'pruneTransactions'.
-                    localTxs = localTxs <> [tx]
-                  }
-            }
+      Open os@OpenState{coordinatedHeadState, datumCache} ->
+        -- Strip inline datums from the new UTxO outputs and merge with existing cache.
+        -- The transaction outputs may contain new inline datums that need caching.
+        let (!strippedUTxO, !newCache) = stripDatums newLocalUTxO
+            !mergedCache = datumCache <> newCache
+         in Open
+              os
+                { coordinatedHeadState =
+                    coordinatedHeadState
+                      { localUTxO = strippedUTxO
+                      , -- NOTE: Order of transactions is important here. See also
+                        -- 'pruneTransactions'.
+                        localTxs = localTxs <> [tx]
+                      }
+                , datumCache = mergedCache
+                }
        where
         CoordinatedHeadState{localTxs} = coordinatedHeadState
       _otherState -> st
@@ -1854,15 +1885,20 @@ aggregate st = \case
   CommitFinalized{} -> st
   DecommitRecorded{decommitTx, newLocalUTxO} -> case st of
     Open
-      os@OpenState{coordinatedHeadState} ->
-        Open
-          os
-            { coordinatedHeadState =
-                coordinatedHeadState
-                  { localUTxO = newLocalUTxO
-                  , decommitTx = Just decommitTx
-                  }
-            }
+      os@OpenState{coordinatedHeadState, datumCache} ->
+        -- Strip inline datums from the new UTxO after decommit and merge with cache.
+        -- The newLocalUTxO represents the remaining UTxO after decommit outputs are removed.
+        let (!strippedUTxO, !newCache) = stripDatums newLocalUTxO
+            !mergedCache = datumCache <> newCache
+         in Open
+              os
+                { coordinatedHeadState =
+                    coordinatedHeadState
+                      { localUTxO = strippedUTxO
+                      , decommitTx = Just decommitTx
+                      }
+                , datumCache = mergedCache
+                }
     _otherState -> st
   DecommitApproved{} -> st
   DecommitInvalid{} -> st
@@ -1892,18 +1928,23 @@ aggregate st = \case
               }
           , headId
           , headSeed
+          , datumCache
           } ->
-          Closed
-            ClosedState
-              { parameters
-              , confirmedSnapshot
-              , contestationDeadline
-              , readyToFanoutSent = False
-              , chainState
-              , headId
-              , headSeed
-              , version
-              }
+          -- Restore inline datums in the confirmed snapshot before storing in ClosedState.
+          -- This is necessary because on-chain transactions (close, contest, fanout) require
+          -- the full inline datums to be present in the UTxO set.
+          let !restoredSnapshot = restoreConfirmedSnapshotDatums datumCache confirmedSnapshot
+           in Closed
+                ClosedState
+                  { parameters
+                  , confirmedSnapshot = restoredSnapshot
+                  , contestationDeadline
+                  , readyToFanoutSent = False
+                  , chainState
+                  , headId
+                  , headSeed
+                  , version
+                  }
       _otherState -> st
   HeadContested{chainState, contestationDeadline} ->
     case st of
@@ -1945,7 +1986,7 @@ aggregate st = \case
   NodeUnsynced -> st
 
 aggregateState ::
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   NodeState tx ->
   Outcome tx ->
   NodeState tx
@@ -1999,3 +2040,38 @@ aggregateChainStateHistory history = \case
   Checkpoint nodeState -> initHistory $ getChainState nodeState.headState
   NodeUnsynced -> history
   NodeSynced -> history
+
+-- * Datum restoration helpers
+
+-- | Restore inline datums to a 'ConfirmedSnapshot' using the provided datum cache.
+-- This is needed when transitioning from OpenState to ClosedState, as on-chain
+-- transactions (close, contest, fanout) require full inline datums.
+restoreConfirmedSnapshotDatums ::
+  HasDatumCache (UTxOType tx) =>
+  DatumCache ->
+  ConfirmedSnapshot tx ->
+  ConfirmedSnapshot tx
+restoreConfirmedSnapshotDatums cache = \case
+  InitialSnapshot{headId, initialUTxO} ->
+    InitialSnapshot
+      { headId
+      , initialUTxO = restoreDatums cache initialUTxO
+      }
+  ConfirmedSnapshot{snapshot, signatures} ->
+    ConfirmedSnapshot
+      { snapshot = restoreSnapshotDatums cache snapshot
+      , signatures
+      }
+
+-- | Restore inline datums to all UTxO fields in a 'Snapshot'.
+restoreSnapshotDatums ::
+  HasDatumCache (UTxOType tx) =>
+  DatumCache ->
+  Snapshot tx ->
+  Snapshot tx
+restoreSnapshotDatums cache snapshot@Snapshot{utxo, utxoToCommit, utxoToDecommit} =
+  snapshot
+    { utxo = restoreDatums cache utxo
+    , utxoToCommit = restoreDatums cache <$> utxoToCommit
+    , utxoToDecommit = restoreDatums cache <$> utxoToDecommit
+    }
