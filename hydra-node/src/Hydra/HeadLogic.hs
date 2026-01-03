@@ -1111,10 +1111,10 @@ onOpenClientClose st =
             { headId
             , headParameters = parameters
             , openVersion = version
-            -- Restore inline datums before creating on-chain transaction.
-            -- The UTxO hash computed from the snapshot must match the hash
-            -- that was signed, which includes full inline datums.
-            , closingSnapshot = restoreConfirmedSnapshotDatums datumCache confirmedSnapshot
+            , -- Restore inline datums before creating on-chain transaction.
+              -- The UTxO hash computed from the snapshot must match the hash
+              -- that was signed, which includes full inline datums.
+              closingSnapshot = restoreConfirmedSnapshotDatums datumCache confirmedSnapshot
             }
       }
  where
@@ -1161,10 +1161,10 @@ onOpenChainCloseTx openState newChainState closedSnapshotNumber contestationDead
                     { headId
                     , headParameters
                     , openVersion = version
-                    -- Restore inline datums before creating on-chain transaction.
-                    -- The UTxO hash computed from the snapshot must match the hash
-                    -- that was signed, which includes full inline datums.
-                    , contestingSnapshot = restoreConfirmedSnapshotDatums datumCache confirmedSnapshot
+                    , -- Restore inline datums before creating on-chain transaction.
+                      -- The UTxO hash computed from the snapshot must match the hash
+                      -- that was signed, which includes full inline datums.
+                      contestingSnapshot = restoreConfirmedSnapshotDatums datumCache confirmedSnapshot
                     }
               }
       else outcome

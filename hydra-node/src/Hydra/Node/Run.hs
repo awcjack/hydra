@@ -27,7 +27,6 @@ import Hydra.Chain.Direct (DirectBackend (..))
 import Hydra.Chain.Direct.State (initialChainState)
 import Hydra.Chain.Offline (loadGenesisFile, withOfflineChain)
 import Hydra.DatumCache (HasDatumCache)
-import Hydra.Tx.IsTx (UTxOType)
 import Hydra.Events (EventSink)
 import Hydra.Events.FileBased (mkFileBasedEventStore)
 import Hydra.Events.Rotation (EventStore (..), RotationConfig (..), newRotatedEventStore)
@@ -63,6 +62,7 @@ import Hydra.Options (
   validateRunOptions,
  )
 import Hydra.Persistence (createPersistenceIncremental)
+import Hydra.Tx.IsTx (UTxOType)
 import Hydra.Utils (readJsonFileThrow)
 import System.FilePath ((</>))
 

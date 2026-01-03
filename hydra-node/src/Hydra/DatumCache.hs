@@ -101,8 +101,9 @@ instance FromJSON DatumCache where
       hash <- entry .: "hash"
       datumHex <- entry .: "datum"
       datumBytes <- decodeBase16 datumHex
-      datum <- either (fail . show) pure $
-        deserialiseFromCBOR (proxyToAsType (Proxy @HashableScriptData)) datumBytes
+      datum <-
+        either (fail . show) pure $
+          deserialiseFromCBOR (proxyToAsType (Proxy @HashableScriptData)) datumBytes
       pure (hash, datum)
 
 -- | Arbitrary instance for DatumCache (for testing).
