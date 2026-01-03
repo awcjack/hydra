@@ -12,7 +12,6 @@ import Hydra.Prelude
 
 import Conduit (MonadUnliftIO, ZipSink (..), foldMapC, foldlC, mapC, mapM_C, runConduitRes, (.|))
 import Control.Concurrent.Class.MonadSTM (
-  stateTVar,
   writeTVar,
  )
 import Control.Monad.Trans.Writer (execWriter, tell)

@@ -21,7 +21,7 @@ import Data.Aeson (
  )
 import Data.Set qualified as Set
 import Hydra.Chain.ChainState (ChainSlot (..), ChainStateType, IsChainState (..))
-import Hydra.DatumCache (DatumCache, HasDatumCache (..), emptyCache)
+import Hydra.DatumCache (HasDatumCache (..), emptyCache)
 import Hydra.Ledger (
   Ledger (..),
   ValidationError (ValidationError),

@@ -23,13 +23,9 @@ module Hydra.DatumCache (
   emptyCache,
 
   -- * Operations
-  insertDatum,
   lookupDatum,
-  deleteDatum,
-  cacheSize,
 
   -- * UTxO Operations
-  extractDatumsFromUTxO,
   stripInlineDatumsFromUTxO,
   restoreInlineDatumsToUTxO,
 
@@ -69,9 +65,6 @@ newtype DatumCache = DatumCache
 
 instance Semigroup DatumCache where
   DatumCache a <> DatumCache b = DatumCache (a <> b)
-
-instance Monoid DatumCache where
-  mempty = emptyCache
 
 -- | ToJSON instance for DatumCache.
 -- Serializes the cache as an object with "entries" containing a list of datum entries.
@@ -131,37 +124,9 @@ instance HasDatumCache UTxO where
 emptyCache :: DatumCache
 emptyCache = DatumCache Map.empty
 
--- | Insert a datum into the cache. The hash is computed from the datum.
--- Returns the hash and the updated cache.
-insertDatum :: HashableScriptData -> DatumCache -> (Hash ScriptData, DatumCache)
-insertDatum datum (DatumCache cache) =
-  let !hash = hashScriptDataBytes datum
-      !cache' = Map.insert hash datum cache
-   in (hash, DatumCache cache')
-
 -- | Look up a datum by its hash.
 lookupDatum :: Hash ScriptData -> DatumCache -> Maybe HashableScriptData
 lookupDatum hash (DatumCache cache) = Map.lookup hash cache
-
--- | Delete a datum from the cache.
-deleteDatum :: Hash ScriptData -> DatumCache -> DatumCache
-deleteDatum hash (DatumCache cache) = DatumCache (Map.delete hash cache)
-
--- | Get the number of datums in the cache.
-cacheSize :: DatumCache -> Int
-cacheSize (DatumCache cache) = Map.size cache
-
--- | Extract all inline datums from a UTxO set into a cache.
--- This does not modify the UTxO set, only builds the cache.
-extractDatumsFromUTxO :: UTxO -> DatumCache
-extractDatumsFromUTxO utxo =
-  foldl' extractFromTxOut emptyCache (UTxO.toList utxo)
- where
-  extractFromTxOut :: DatumCache -> (TxIn, TxOut ctx) -> DatumCache
-  extractFromTxOut cache (_, txOut) =
-    case extractInlineDatum txOut of
-      Nothing -> cache
-      Just datum -> snd $ insertDatum datum cache
 
 -- | Strip inline datums from all TxOuts in a UTxO set, replacing them with
 -- datum hashes. Returns the modified UTxO and a cache containing the extracted datums.
@@ -230,10 +195,3 @@ restoreInlineDatum cache (Api.TxOut addr value datum refScript) =
       Api.TxOut addr value (Api.TxOutDatumInline sd) refScript
     _ ->
       Api.TxOut addr value Api.TxOutDatumNone refScript
-
--- | Extract the inline datum from a TxOut, if present.
-extractInlineDatum :: TxOut ctx -> Maybe HashableScriptData
-extractInlineDatum (Api.TxOut _ _ datum _) =
-  case datum of
-    Api.TxOutDatumInline sd -> Just sd
-    _ -> Nothing
