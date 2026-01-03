@@ -30,6 +30,7 @@ import Hydra.Chain (
   initHistory,
  )
 import Hydra.Chain.ChainState (ChainStateType, IsChainState)
+import Hydra.DatumCache (HasDatumCache)
 import Hydra.Events (EventId, EventSink (..), EventSource (..), getEventId, putEventsToSinks)
 import Hydra.Events.Rotation (EventStore (..))
 import Hydra.HeadLogic (
@@ -57,7 +58,7 @@ import Hydra.Node.ParameterMismatch (ParamMismatch (..), ParameterMismatch (..))
 import Hydra.Node.State (NodeState (..), initNodeState)
 import Hydra.Node.Util (readFileTextEnvelopeThrow)
 import Hydra.Options (CardanoChainConfig (..), ChainConfig (..), RunOptions (..), defaultContestationPeriod, defaultDepositPeriod)
-import Hydra.Tx (HasParty (..), HeadParameters (..), Party (..), deriveParty)
+import Hydra.Tx (HasParty (..), HeadParameters (..), IsTx (..), Party (..), deriveParty)
 import Hydra.Tx.Utils (verificationKeyToOnChainId)
 
 -- * Environment Handling
@@ -174,7 +175,7 @@ instance HasParty (DraftHydraNode tx m) where
 -- | Hydrate a 'DraftHydraNode' by loading events from source, re-aggregate node
 -- state and sending events to sinks while doing so.
 hydrate ::
-  (IsChainState tx, MonadDelay m, MonadLabelledSTM m, MonadAsync m, MonadThrow m, MonadUnliftIO m) =>
+  (IsChainState tx, HasDatumCache (UTxOType tx), MonadDelay m, MonadLabelledSTM m, MonadAsync m, MonadThrow m, MonadUnliftIO m) =>
   Tracer m (HydraNodeLog tx) ->
   Environment ->
   Ledger tx ->
@@ -287,6 +288,7 @@ runHydraNode ::
   , MonadAsync m
   , MonadTime m
   , IsChainState tx
+  , HasDatumCache (UTxOType tx)
   ) =>
   HydraNode tx m ->
   m ()
@@ -300,6 +302,7 @@ stepHydraNode ::
   , MonadAsync m
   , MonadTime m
   , IsChainState tx
+  , HasDatumCache (UTxOType tx)
   ) =>
   HydraNode tx m ->
   m ()
@@ -345,7 +348,7 @@ waitDelay = 0.1
 
 -- | Monadic interface around 'Hydra.Logic.update'.
 processNextInput ::
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   HydraNode tx m ->
   Input tx ->
   UTCTime ->
@@ -423,7 +426,11 @@ createNodeStateHandler lastSeenEventId initialState = do
   ns <- newLabelledTVarIO "node-state" initialState
   pure
     NodeStateHandler
-      { modifyNodeState = stateTVar ns
+      { modifyNodeState = \f -> do
+          s <- readTVar ns
+          let (a, !s') = f s
+          writeTVar ns s'
+          pure a
       , queryNodeState = readTVar ns
       , getNextEventId = do
           eventId <- readTVar nextEventIdV

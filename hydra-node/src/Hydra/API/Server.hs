@@ -32,6 +32,7 @@ import Hydra.Cardano.Api (LedgerEra)
 import Hydra.Chain (Chain (..))
 import Hydra.Chain.ChainState (IsChainState)
 import Hydra.Chain.Direct.State ()
+import Hydra.DatumCache (HasDatumCache)
 import Hydra.Events (EventSink (..), EventSource (..))
 import Hydra.HeadLogic (
   HeadState (..),
@@ -81,7 +82,7 @@ data APIServerConfig = APIServerConfig
 
 withAPIServer ::
   forall tx.
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   APIServerConfig ->
   Environment ->
   FilePath ->
