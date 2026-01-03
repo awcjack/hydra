@@ -13,6 +13,7 @@ import Hydra.API.ServerOutput (ClientMessage (..), ServerOutput (..), TimedServe
 import Hydra.Cardano.Api (SigningKey)
 import Hydra.Chain (Chain (..), ChainEvent (..), OnChainTx (..), PostTxError (..))
 import Hydra.Chain.ChainState (ChainSlot (ChainSlot), IsChainState)
+import Hydra.DatumCache (HasDatumCache)
 import Hydra.Events (EventSink (..), EventSource (..), getEventId)
 import Hydra.Events.Rotation (EventStore (..), LogId)
 import Hydra.HeadLogic (Input (..), TTL)
@@ -42,6 +43,7 @@ import Hydra.Options (defaultContestationPeriod, defaultDepositPeriod)
 import Hydra.Tx.ContestationPeriod (ContestationPeriod (..))
 import Hydra.Tx.Crypto (HydraKey, sign)
 import Hydra.Tx.HeadParameters (HeadParameters (..))
+import Hydra.Tx.IsTx (UTxOType)
 import Hydra.Tx.Party (Party, deriveParty)
 import Test.Hydra.Node.Fixture (testEnvironment)
 import Test.Hydra.Tx.Fixture (
@@ -438,7 +440,7 @@ observationInput observedTx =
     }
 
 runToCompletion ::
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   HydraNode tx IO ->
   IO ()
 runToCompletion node@HydraNode{inputQueue = InputQueue{isEmpty}} = go

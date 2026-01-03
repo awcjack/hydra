@@ -7,6 +7,7 @@ import Control.Monad (foldM)
 import Data.List qualified as List
 import Hydra.Chain (OnChainTx (..))
 import Hydra.Chain.ChainState (ChainSlot (..), IsChainState)
+import Hydra.DatumCache (HasDatumCache)
 import Hydra.Events (EventId, EventSink (..), HasEventId (..), getEvents)
 import Hydra.Events.Rotation (EventStore (..), RotationConfig (..), newRotatedEventStore)
 import Hydra.HeadLogic (HeadState (..), StateChanged (..), aggregateNodeState)
@@ -17,6 +18,7 @@ import Hydra.Node (DraftHydraNode, hydrate)
 import Hydra.Node.State (NodeState (..), initNodeState)
 import Hydra.NodeSpec (createMockEventStore, inputsToOpenHead, notConnect, observationInput, primeWith, runToCompletion)
 import Hydra.Tx.ContestationPeriod (toNominalDiffTime)
+import Hydra.Tx.IsTx (UTxOType)
 import Test.Hydra.Node.Fixture (testEnvironment, testHeadId)
 import Test.Hydra.Tx.Fixture (cperiod)
 import Test.QuickCheck (Positive (..), choose, sized)
@@ -275,5 +277,5 @@ instance HasEventId TrivialEvent where
 trivialCheckpoint :: [TrivialEvent] -> TrivialEvent
 trivialCheckpoint = sum
 
-mkAggregator :: IsChainState tx => NodeState tx -> StateEvent tx -> NodeState tx
+mkAggregator :: (IsChainState tx, HasDatumCache (UTxOType tx)) => NodeState tx -> StateEvent tx -> NodeState tx
 mkAggregator s StateEvent{stateChanged} = aggregateNodeState s stateChanged
