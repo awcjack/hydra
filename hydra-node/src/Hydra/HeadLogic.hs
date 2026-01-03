@@ -1801,18 +1801,23 @@ aggregate st = \case
       _otherState -> st
   SnapshotRequested{snapshot, requestedTxIds, newLocalUTxO, newLocalTxs, newCurrentDepositTxId} ->
     case st of
-      Open os@OpenState{coordinatedHeadState} ->
-        Open
-          os
-            { coordinatedHeadState =
-                coordinatedHeadState
-                  { seenSnapshot = SeenSnapshot snapshot mempty
-                  , localTxs = newLocalTxs
-                  , localUTxO = newLocalUTxO
-                  , allTxs = foldr Map.delete allTxs requestedTxIds
-                  , currentDepositTxId = newCurrentDepositTxId
-                  }
-            }
+      Open os@OpenState{coordinatedHeadState, datumCache} ->
+        -- Strip inline datums from the new UTxO and merge with existing cache.
+        -- The snapshot's UTxO represents the state after applying requested transactions.
+        let (!strippedUTxO, !newCache) = stripDatums newLocalUTxO
+            !mergedCache = datumCache <> newCache
+         in Open
+              os
+                { coordinatedHeadState =
+                    coordinatedHeadState
+                      { seenSnapshot = SeenSnapshot snapshot mempty
+                      , localTxs = newLocalTxs
+                      , localUTxO = strippedUTxO
+                      , allTxs = foldr Map.delete allTxs requestedTxIds
+                      , currentDepositTxId = newCurrentDepositTxId
+                      }
+                , datumCache = mergedCache
+                }
        where
         CoordinatedHeadState{allTxs} = coordinatedHeadState
       _otherState -> st
@@ -1856,26 +1861,36 @@ aggregate st = \case
       _otherState -> st
   LocalStateCleared{snapshotNumber} ->
     case st of
-      Open os@OpenState{coordinatedHeadState = coordinatedHeadState@CoordinatedHeadState{confirmedSnapshot}} ->
-        Open
-          os
-            { coordinatedHeadState =
-                case confirmedSnapshot of
-                  InitialSnapshot{initialUTxO} ->
+      Open os@OpenState{coordinatedHeadState = coordinatedHeadState@CoordinatedHeadState{confirmedSnapshot}, datumCache} ->
+        case confirmedSnapshot of
+          InitialSnapshot{initialUTxO} ->
+            -- initialUTxO is already stripped when stored, cache unchanged
+            Open
+              os
+                { coordinatedHeadState =
                     coordinatedHeadState
                       { localUTxO = initialUTxO
                       , localTxs = mempty
                       , allTxs = mempty
                       , seenSnapshot = NoSeenSnapshot
                       }
-                  ConfirmedSnapshot{snapshot = Snapshot{utxo}} ->
-                    coordinatedHeadState
-                      { localUTxO = utxo
-                      , localTxs = mempty
-                      , allTxs = mempty
-                      , seenSnapshot = LastSeenSnapshot snapshotNumber
-                      }
-            }
+                }
+          ConfirmedSnapshot{snapshot = Snapshot{utxo}} ->
+            -- The snapshot's utxo is NOT stripped, so strip it now.
+            -- Merge any new datums with the existing cache.
+            let (!strippedUTxO, !newCache) = stripDatums utxo
+                !mergedCache = datumCache <> newCache
+             in Open
+                  os
+                    { coordinatedHeadState =
+                        coordinatedHeadState
+                          { localUTxO = strippedUTxO
+                          , localTxs = mempty
+                          , allTxs = mempty
+                          , seenSnapshot = LastSeenSnapshot snapshotNumber
+                          }
+                    , datumCache = mergedCache
+                    }
       _otherState -> st
   DepositRecorded{} -> st
   DepositActivated{} -> st
