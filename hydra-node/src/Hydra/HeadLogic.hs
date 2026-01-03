@@ -1414,7 +1414,12 @@ updateUnsyncedHead env ledger now currentSlot pendingDeposits st ev syncStatus =
     ChainInput{} ->
       handleChainInput env ledger now currentSlot pendingDeposits st ev syncStatus
     ClientInput{clientInput} ->
-      cause . ClientEffect $ ServerOutput.RejectedInput clientInput "chain out of sync"
+      -- Allow NewTx to proceed even when catching up, since L2 transactions
+      -- don't require L1 chain awareness. Other operations that interact with
+      -- L1 (Init, Close, Contest, etc.) are still blocked.
+      case clientInput of
+        NewTx{} -> handleClientInput env ledger now currentSlot pendingDeposits st ev
+        _ -> cause . ClientEffect $ ServerOutput.RejectedInput clientInput "chain out of sync"
     NetworkInput{} ->
       wait WaitOnNodeInSync{currentSlot}
 

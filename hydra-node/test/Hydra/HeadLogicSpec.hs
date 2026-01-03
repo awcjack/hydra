@@ -21,8 +21,9 @@ import Data.List qualified as List
 import Data.Map (notMember)
 import Data.Map qualified as Map
 import Data.Set qualified as Set
-import Hydra.API.ClientInput (ClientInput (SideLoadSnapshot))
+import Hydra.API.ClientInput (ClientInput (Close, NewTx, SideLoadSnapshot))
 import Hydra.API.ServerOutput (DecommitInvalidReason (..))
+import Hydra.API.ServerOutput qualified as ServerOutput
 import Hydra.Cardano.Api (ChainPoint (..), SlotNo (..), fromLedgerTx, genTxIn, mkVkAddress, toLedgerTx, txOutValue, unSlotNo, pattern TxValidityUpperBound)
 import Hydra.Chain (
   ChainEvent (..),
@@ -1283,6 +1284,28 @@ spec =
         Wait WaitOnNotApplicableDecommitTx{notApplicableReason = DecommitTxInvalid{}} _ -> True
         _ -> False
 
+    describe "Node Sync Status" $ do
+      let ledger = simpleLedger
+      it "allows NewTx when node is catching up on chain sync" $ do
+        -- L2 transactions don't require L1 chain awareness, so they should
+        -- be processed even when the node is temporarily behind on L1 blocks.
+        let tx = aValidTx 1
+            catchingUpState = inOpenStateCatchingUp threeParties
+            input = ClientInput (NewTx tx)
+        now <- nowFromSlot catchingUpState.currentSlot
+        update bobEnv ledger now catchingUpState input `hasEffectSatisfying` \case
+          NetworkEffect ReqTx{} -> True
+          _ -> False
+
+      it "rejects Close when node is catching up on chain sync" $ do
+        -- L1-dependent operations should be blocked when catching up.
+        let catchingUpState = inOpenStateCatchingUp threeParties
+            input = ClientInput Close
+        now <- nowFromSlot catchingUpState.currentSlot
+        update bobEnv ledger now catchingUpState input `hasEffectSatisfying` \case
+          ClientEffect (ServerOutput.RejectedInput{reason}) -> reason == "chain out of sync"
+          _ -> False
+
 -- * Properties
 
 prop_ignoresUnrelatedOnInitTx :: Property
@@ -1478,6 +1501,42 @@ inOpenState' parties coordinatedHeadState =
  where
   parameters = HeadParameters defaultContestationPeriod parties
 
+  chainSlot = ChainSlot 0
+
+-- | Like 'inOpenState' but creates a NodeCatchingUp state instead of NodeInSync.
+-- Used to test behavior when the node is behind on observing L1 blocks.
+inOpenStateCatchingUp ::
+  [Party] ->
+  NodeState SimpleTx
+inOpenStateCatchingUp parties =
+  NodeCatchingUp
+    { headState =
+        Open
+          OpenState
+            { parameters
+            , coordinatedHeadState =
+                CoordinatedHeadState
+                  { localUTxO = u0
+                  , allTxs = mempty
+                  , localTxs = mempty
+                  , confirmedSnapshot
+                  , seenSnapshot = NoSeenSnapshot
+                  , currentDepositTxId = Nothing
+                  , decommitTx = Nothing
+                  , version = 0
+                  }
+            , chainState = SimpleChainState{slot = chainSlot}
+            , headId = testHeadId
+            , headSeed = testHeadSeed
+            , datumCache = emptyCache
+            }
+    , pendingDeposits = mempty
+    , currentSlot = chainSlot
+    }
+ where
+  u0 = mempty
+  confirmedSnapshot = InitialSnapshot testHeadId u0
+  parameters = HeadParameters defaultContestationPeriod parties
   chainSlot = ChainSlot 0
 
 -- XXX: This is always called with 'threeParties'
