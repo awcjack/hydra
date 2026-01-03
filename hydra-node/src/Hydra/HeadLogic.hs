@@ -394,7 +394,7 @@ onOpenNetworkReqTx env ledger currentSlot st ttl tx =
 --
 -- __Transition__: 'OpenState' → 'OpenState'
 onOpenNetworkReqSn ::
-  IsTx tx =>
+  (IsTx tx, HasDatumCache (UTxOType tx)) =>
   Environment ->
   Ledger tx ->
   PendingDeposits tx ->
@@ -521,7 +521,7 @@ onOpenNetworkReqSn env ledger pendingDeposits currentSlot st otherParty sv sn re
 
   requireApplicableDecommitTx cont =
     case mDecommitTx of
-      Nothing -> cont (confirmedUTxO, Nothing)
+      Nothing -> cont (restoredConfirmedUTxO, Nothing)
       Just decommitTx ->
         -- Spec:
         -- require tx𝜔 = ⊥ ∨ 𝑈𝛼 = ∅
@@ -530,9 +530,9 @@ onOpenNetworkReqSn env ledger pendingDeposits currentSlot st otherParty sv sn re
         if sv == confVersion && isJust confUTxOToDecommit
           then
             if confUTxOToDecommit == Just (utxoFromTx decommitTx)
-              then cont (confirmedUTxO, confUTxOToDecommit)
+              then cont (restoredConfirmedUTxO, confUTxOToDecommit)
               else Error $ RequireFailed ReqSnDecommitNotSettled
-          else case applyTransactions ledger currentSlot confirmedUTxO [decommitTx] of
+          else case applyTransactions ledger currentSlot restoredConfirmedUTxO [decommitTx] of
             Left (_, err) ->
               Error $ RequireFailed $ SnapshotDoesNotApply sn (txId decommitTx) err
             Right newConfirmedUTxO -> do
@@ -587,9 +587,13 @@ onOpenNetworkReqSn env ledger pendingDeposits currentSlot st otherParty sv sn re
     InitialSnapshot{initialUTxO} -> initialUTxO
     ConfirmedSnapshot{snapshot = Snapshot{utxo, utxoToCommit}} -> utxo <> fromMaybe mempty utxoToCommit
 
+  -- Restore inline datums before applying transactions.
+  -- The ledger validation needs full datums to validate script execution.
+  restoredConfirmedUTxO = restoreDatums datumCache confirmedUTxO
+
   CoordinatedHeadState{confirmedSnapshot, seenSnapshot, allTxs, localTxs, version} = coordinatedHeadState
 
-  OpenState{parameters, coordinatedHeadState, headId} = st
+  OpenState{parameters, coordinatedHeadState, headId, datumCache} = st
 
   Environment{signingKey} = env
 
