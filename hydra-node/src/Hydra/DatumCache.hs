@@ -62,8 +62,8 @@ import Hydra.Cardano.Api qualified as Api
 
 -- | A strict cache mapping datum hashes to their full datum content.
 -- Uses a strict Map to prevent thunk buildup.
-data DatumCache = DatumCache
-  { unDatumCache :: !(Map (Hash ScriptData) HashableScriptData)
+newtype DatumCache = DatumCache
+  { unDatumCache :: Map (Hash ScriptData) HashableScriptData
   }
   deriving stock (Eq, Show, Generic)
 
