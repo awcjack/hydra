@@ -21,6 +21,7 @@ import Data.Aeson (
  )
 import Data.Set qualified as Set
 import Hydra.Chain.ChainState (ChainSlot (..), ChainStateType, IsChainState (..))
+import Hydra.DatumCache (DatumCache, HasDatumCache (..), emptyCache)
 import Hydra.Ledger (
   Ledger (..),
   ValidationError (ValidationError),
@@ -100,6 +101,12 @@ instance IsTx SimpleTx where
       , txInputs = utxo
       , txOutputs = mempty
       }
+
+-- | No-op instance for SimpleTx UTxO type (Set SimpleTxOut).
+-- SimpleTx doesn't have inline datums, so stripping and restoring are identity operations.
+instance HasDatumCache (Set SimpleTxOut) where
+  stripDatums utxo = (utxo, emptyCache)
+  restoreDatums _ utxo = utxo
 
 -- * Simple chain state
 

@@ -84,7 +84,7 @@ data StateChanged tx
   | TransactionAppliedToLocalUTxO
       { headId :: HeadId
       , tx :: tx
-      , newLocalUTxO :: UTxOType tx
+      , newLocalUTxO :: !(UTxOType tx)
       }
   | SnapshotRequestDecided {snapshotNumber :: SnapshotNumber}
   | -- | A snapshot was requested by some party.
@@ -93,8 +93,8 @@ data StateChanged tx
     SnapshotRequested
       { snapshot :: Snapshot tx
       , requestedTxIds :: [TxIdType tx]
-      , newLocalUTxO :: UTxOType tx
-      , newLocalTxs :: [tx]
+      , newLocalUTxO :: !(UTxOType tx)
+      , newLocalTxs :: ![tx]
       , newCurrentDepositTxId :: Maybe (TxIdType tx)
       }
   | PartySignedSnapshot {snapshot :: Snapshot tx, party :: Party, signature :: Signature (Snapshot tx)}
@@ -122,7 +122,7 @@ data StateChanged tx
       , newVersion :: SnapshotVersion
       , depositTxId :: TxIdType tx
       }
-  | DecommitRecorded {headId :: HeadId, decommitTx :: tx, newLocalUTxO :: UTxOType tx, utxoToDecommit :: UTxOType tx}
+  | DecommitRecorded {headId :: HeadId, decommitTx :: tx, newLocalUTxO :: !(UTxOType tx), utxoToDecommit :: !(UTxOType tx)}
   | DecommitApproved {headId :: HeadId, decommitTxId :: TxIdType tx, utxoToDecommit :: UTxOType tx}
   | DecommitInvalid {headId :: HeadId, decommitTx :: tx, decommitInvalidReason :: DecommitInvalidReason tx}
   | DecommitFinalized
