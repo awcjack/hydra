@@ -805,6 +805,54 @@ apiServerSpec = do
           $ do
             post "/transaction" (mkReq testTx) `shouldRespondWith` 503
 
+      prop "ignores RejectedInput for different transaction" $ do
+        -- This test verifies the fix for the race condition where a RejectedInput
+        -- for one transaction was incorrectly matched by the handler waiting for
+        -- a different transaction.
+        responseChannel <- newTChanIO
+        let txA = SimpleTx 42 mempty mempty
+            txB = SimpleTx 99 mempty mempty
+            -- RejectedInput for txB (different from txA we're submitting)
+            rejectedB = RejectedInput{clientInput = NewTx txB, reason = "chain out of sync"}
+            -- SnapshotConfirmed includes txA
+            snapshot =
+              Snapshot
+                { headId = testHeadId
+                , version = 1
+                , number = 7
+                , confirmed = [txA]
+                , utxo = mempty
+                , utxoToCommit = mempty
+                , utxoToDecommit = mempty
+                }
+            confirmedEvent =
+              TimedServerOutput
+                { output = SnapshotConfirmed{snapshot = snapshot, signatures = mempty, headId = testHeadId}
+                , seq = 0
+                , time = now
+                }
+        withApplication
+          ( httpApp @SimpleTx
+              nullTracer
+              dummyChainHandle
+              testEnvironment
+              dummyStatePath
+              defaultPParams
+              (pure inUnsyncedIdleState)
+              (pure CannotCommit)
+              (pure [])
+              -- First write RejectedInput for txB, then SnapshotConfirmed for txA
+              (const $ atomically $ do
+                writeTChan responseChannel (Right rejectedB)
+                writeTChan responseChannel (Left confirmedEvent))
+              10
+              responseChannel
+          )
+          $ do
+            -- Handler for txA should ignore the RejectedInput for txB
+            -- and correctly return 200 when txA is confirmed
+            post "/transaction" (mkReq txA) `shouldRespondWith` 200
+
     describe "POST /decommit" $ do
       it "returns 202 on timeout" $ do
         responseChannel <- newTChanIO
