@@ -581,8 +581,9 @@ handleSubmitL2Tx putClientInput apiTransactionTimeout responseChannel body = do
     go = do
       event <- atomically $ readTChan dupChannel
       case event of
-        Right (RejectedInput{clientInput = NewTx{}, reason}) -> do
-          pure $ SubmitTxRejectedResponse reason
+        Right (RejectedInput{clientInput = NewTx{transaction}, reason})
+          | txId transaction == txid ->
+              pure $ SubmitTxRejectedResponse reason
         Left (TimedServerOutput{output}) -> case output of
           TxValid{transactionId}
             | transactionId == txid ->
