@@ -842,9 +842,10 @@ apiServerSpec = do
               (pure CannotCommit)
               (pure [])
               -- First write RejectedInput for txB, then SnapshotConfirmed for txA
-              (const $ atomically $ do
-                writeTChan responseChannel (Right rejectedB)
-                writeTChan responseChannel (Left confirmedEvent))
+              ( const $ atomically $ do
+                  writeTChan responseChannel (Right rejectedB)
+                  writeTChan responseChannel (Left confirmedEvent)
+              )
               10
               responseChannel
           )
