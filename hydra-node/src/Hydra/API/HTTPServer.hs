@@ -538,7 +538,7 @@ handleSubmitL2Tx ::
 handleSubmitL2Tx putClientInput apiTransactionTimeout responseChannel body = do
   case Aeson.eitherDecode' @(SubmitL2TxRequest tx) body of
     Left err ->
-      pure $ responseLBS status400 jsonContent (Aeson.encode $ Aeson.String $ pack err)
+      pure $ responseLBS status400 jsonContent (Aeson.encode $ SubmitTxRejectedResponse $ pack err)
     Right SubmitL2TxRequest{submitL2Tx} -> do
       -- Duplicate the channel to avoid consuming messages from other consumers.
       dupChannel <- atomically $ dupTChan responseChannel
