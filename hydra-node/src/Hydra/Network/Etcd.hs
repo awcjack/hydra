@@ -43,7 +43,9 @@ import Hydra.Prelude
 import Cardano.Binary (decodeFull', serialize')
 import Cardano.Crypto.Hash (SHA256, hashToStringAsHex, hashWithSerialiser)
 import Control.Concurrent.Class.MonadSTM (
+  lengthTBQueue,
   modifyTVar',
+  newTVarIO,
   peekTBQueue,
   readTBQueue,
   swapTVar,
@@ -88,6 +90,8 @@ import Network.GRPC.Client (
  )
 import Network.GRPC.Client.StreamType.IO (biDiStreaming, nonStreaming)
 import Network.GRPC.Common (GrpcError (..), GrpcException (..), HTTP2Settings (..), NextElem (..), def, defaultHTTP2Settings)
+import System.IO (hPutStrLn)
+import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Network.GRPC.Common.Protobuf (Proto (..), Protobuf, defMessage, (.~))
 import Network.GRPC.Etcd (
   Compare'CompareResult (..),
@@ -155,14 +159,15 @@ withEtcdNetwork tracer protocolVersion config callback action = do
                         ("etcd-waitMessages", waitMessages tracer conn persistenceDir callback)
                         ( "etcd-callback-4"
                         , do
-                            queue <- newPersistentQueue (persistenceDir </> "pending-broadcast") 1000
+                            let maxQueueSize = 1000 :: Natural
+                            queue <- newPersistentQueue (persistenceDir </> "pending-broadcast") maxQueueSize
                             raceLabelled_
                               ("etcd-broadcastMessages", broadcastMessages tracer config advertise queue)
                               ( "etcd-network-component-action"
                               , do
                                   action
                                     Network
-                                      { broadcast = writePersistentQueue queue
+                                      { broadcast = monitoredBroadcast queue maxQueueSize
                                       }
                               )
                         )
@@ -171,6 +176,17 @@ withEtcdNetwork tracer protocolVersion config callback action = do
       )
  where
   clientHost = Host{hostname = "127.0.0.1", port = getClientPort config}
+
+  -- | Write to queue with capacity monitoring. Logs critical warning when queue is near capacity.
+  monitoredBroadcast :: ToCBOR a => PersistentQueue IO a -> Natural -> a -> IO ()
+  monitoredBroadcast pq@PersistentQueue{queue = tbQueue} maxSize msg = do
+    -- Check current queue size before writing
+    currentSize <- atomically $ lengthTBQueue tbQueue
+    let warningThreshold = (maxSize * 80) `div` 100 :: Natural -- 80% of capacity
+    when (currentSize >= warningThreshold) $ do
+      logCritical $ QueueNearCapacity{currentSize, maxSize}
+    writePersistentQueue pq msg
+
   traceStderr p NetworkCallback{onConnectivity} =
     forever $ do
       bs <- BS.hGetLine (getStderr p)
@@ -333,15 +349,32 @@ broadcastMessages ::
   PersistentQueue IO msg ->
   IO ()
 broadcastMessages tracer config ourHost queue =
-  withGrpcContext "broadcastMessages" . forever $ do
-    msg <- peekPersistentQueue queue
-    (putMessage tracer config ourHost msg >> popPersistentQueue queue msg)
-      `catch` \case
-        GrpcException{grpcError, grpcErrorMessage}
-          | grpcError == GrpcUnavailable || grpcError == GrpcDeadlineExceeded -> do
-              traceWith tracer $ BroadcastFailed{reason = fromMaybe "unknown" grpcErrorMessage}
-              threadDelay 1
-        e -> throwIO e
+  withGrpcContext "broadcastMessages" $ do
+    failureCountRef <- newTVarIO (0 :: Int)
+    forever $ do
+      msg <- peekPersistentQueue queue
+      (do
+        putMessage tracer config ourHost msg
+        popPersistentQueue queue msg
+        -- Reset failure count on success
+        atomically $ writeTVar failureCountRef 0)
+        `catch` \case
+          GrpcException{grpcError, grpcErrorMessage}
+            | grpcError == GrpcUnavailable || grpcError == GrpcDeadlineExceeded -> do
+                let reason = fromMaybe "unknown" grpcErrorMessage
+                traceWith tracer $ BroadcastFailed{reason}
+                -- Track consecutive failures
+                failCount <- atomically $ do
+                  count <- readTVar failureCountRef
+                  let newCount = count + 1
+                  writeTVar failureCountRef newCount
+                  pure newCount
+                -- Log critical after 5 consecutive failures (always visible even in quiet mode)
+                when (failCount >= 5 && failCount `mod` 5 == 0) $ do
+                  let criticalLog = ConsecutiveBroadcastFailures{failureCount = failCount, lastReason = reason}
+                  logCritical criticalLog
+                threadDelay 1
+          e -> throwIO e
 
 -- | Broadcast a message to the etcd cluster.
 putMessage ::
@@ -645,5 +678,24 @@ data EtcdLog
   | MatchingProtocolVersion {version :: ProtocolVersion}
   | WatchMessagesStartRevision {startRevision :: Int64}
   | WatchMessagesFallbackTo {compactRevision :: Int64}
+  | -- | Critical: Queue is reaching capacity, may block soon
+    QueueNearCapacity {currentSize :: Natural, maxSize :: Natural}
+  | -- | Critical: Consecutive broadcast failures
+    ConsecutiveBroadcastFailures {failureCount :: Int, lastReason :: Text}
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToJSON, FromJSON)
+
+-- | Log critical messages to stderr even in quiet mode.
+-- These are important diagnostics that should never be silenced.
+logCritical :: ToJSON a => a -> IO ()
+logCritical msg = do
+  now <- getCurrentTime
+  let envelope = object
+        [ "timestamp" Aeson..= now
+        , "level" Aeson..= ("CRITICAL" :: Text)
+        , "message" Aeson..= msg
+        ]
+  hPutStrLn stderr $ LBS8.unpack $ Aeson.encode envelope
+  hFlush stderr
+ where
+  object = Aeson.object
