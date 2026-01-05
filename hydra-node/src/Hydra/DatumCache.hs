@@ -72,7 +72,6 @@ import Hydra.Cardano.Api (
   hashScriptDataBytes,
  )
 import Hydra.Cardano.Api qualified as Api
-import Numeric.Natural (Natural)
 
 -- | A strict cache mapping datum hashes to their full datum content.
 -- Uses a strict Map to prevent thunk buildup.
@@ -169,35 +168,26 @@ pruneCache :: Set (Hash ScriptData) -> DatumCache -> DatumCache
 pruneCache keepHashes (DatumCache cache) =
   DatumCache $! Map.restrictKeys cache keepHashes
 
--- | Prune the cache with a size limit. First restricts to only the given hashes
--- (UTxO-aligned pruning), then if the cache still exceeds the limit, evicts
--- entries until the limit is satisfied.
+-- | Prune the cache to only keep datums referenced by the given set of hashes.
+-- This removes datums that are no longer needed (not in current UTxO), reducing
+-- memory usage.
 --
--- The eviction strategy is deterministic: entries are sorted by their hash
--- and the oldest (lowest hash values) are evicted first. This ensures
--- consistent behavior across nodes.
+-- IMPORTANT: We do NOT apply size-based eviction after pruning because all
+-- remaining datums are required for transaction validation. If we evicted
+-- datums that are still referenced by the current UTxO, transactions consuming
+-- those UTxOs would fail with MissingRequiredDatums errors.
 --
--- A limit of 0 means unlimited (no size-based eviction).
+-- The maxSize parameter is kept for API compatibility but only serves as a
+-- monitoring hint - if the cache exceeds this size, operators should be aware
+-- that memory usage may be higher than expected.
+--
+-- A limit of 0 means unlimited (the normal case).
 pruneCacheWithLimit :: Natural -> Set (Hash ScriptData) -> DatumCache -> DatumCache
-pruneCacheWithLimit maxSize keepHashes cache
-  | maxSize == 0 = prunedCache
-  | currentSize <= fromIntegral maxSize = prunedCache
-  | otherwise = evictToLimit maxSize prunedCache
- where
-  prunedCache = pruneCache keepHashes cache
-  currentSize = cacheSize prunedCache
-
--- | Evict entries from the cache until the size is at or below the limit.
--- Uses deterministic eviction: entries are sorted by hash and lowest hashes
--- are evicted first.
-evictToLimit :: Natural -> DatumCache -> DatumCache
-evictToLimit maxSize (DatumCache cache)
-  | Map.size cache <= fromIntegral maxSize = DatumCache cache
-  | otherwise =
-      let entries = Map.toAscList cache -- Sorted by hash
-          entriesToKeep = fromIntegral maxSize
-          keptEntries = drop (length entries - entriesToKeep) entries
-       in DatumCache $! Map.fromList keptEntries
+pruneCacheWithLimit _maxSize keepHashes cache =
+  -- Only prune to UTxO-aligned datums. Never evict datums that are still
+  -- referenced by the current UTxO set, as this would break transaction
+  -- validation with MissingRequiredDatums errors.
+  pruneCache keepHashes cache
 
 -- | Get the number of datums in the cache.
 cacheSize :: DatumCache -> Int
