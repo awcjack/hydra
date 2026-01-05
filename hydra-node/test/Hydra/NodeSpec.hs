@@ -16,6 +16,7 @@ import Hydra.Chain.ChainState (ChainSlot (ChainSlot), IsChainState)
 import Hydra.Events (EventSink (..), EventSource (..), getEventId)
 import Hydra.Events.Rotation (EventStore (..), LogId)
 import Hydra.HeadLogic (Input (..), TTL)
+import Hydra.HeadLogic.Input (inputPriority)
 import Hydra.HeadLogic.Outcome (StateChanged (HeadInitialized), genStateChanged)
 import Hydra.HeadLogic.StateEvent (StateEvent (..), genStateEvent)
 import Hydra.HeadLogicSpec (inInitialState, receiveMessage, receiveMessageFrom, testSnapshot)
@@ -333,11 +334,15 @@ spec = parallel $ do
       entries <- fmap Logging.message <$> readTVarIO logs
       entries `shouldSatisfy` any isContestationPeriodMismatch
 
--- | Add given list of inputs to the 'InputQueue'. This is returning the node to
--- allow for chaining with 'runToCompletion'.
-primeWith :: Monad m => [Input tx] -> HydraNode tx m -> m (HydraNode tx m)
-primeWith inputs node@HydraNode{inputQueue = InputQueue{enqueue}} = do
-  forM_ inputs enqueue
+-- | Add given list of inputs to the 'InputQueue'. A preceding 'Tick' is enqueued
+-- to advance the chain slot and ensure the 'NodeState' is in sync. This is
+-- returning the node to allow for chaining with 'runToCompletion'.
+primeWith :: (MonadSTM m, MonadTime m) => [Input tx] -> HydraNode tx m -> m (HydraNode tx m)
+primeWith inputs node@HydraNode{inputQueue = InputQueue{enqueue}, nodeStateHandler = NodeStateHandler{queryNodeState}} = do
+  now <- getCurrentTime
+  chainSlot <- currentSlot <$> atomically queryNodeState
+  let tick = ChainInput $ Tick now (chainSlot + 1)
+  forM_ (tick : inputs) $ \input -> enqueue (inputPriority input) input
   pure node
 
 -- | Convert a 'DraftHydraNode' to a 'HydraNode' by providing mock implementations.
