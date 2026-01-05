@@ -107,6 +107,7 @@ instance IsTx SimpleTx where
 instance HasDatumCache (Set SimpleTxOut) where
   stripDatums utxo = (utxo, emptyCache)
   restoreDatums _ utxo = utxo
+  getDatumHashes _ = mempty
 
 -- * Simple chain state
 

@@ -77,6 +77,7 @@ initEnvironment options = do
       , contestationPeriod
       , depositPeriod
       , configuredPeers
+      , datumHotCacheSize
       }
  where
   -- XXX: This is mostly a cardano-specific initialization step of loading
@@ -117,6 +118,7 @@ initEnvironment options = do
     , chainConfig
     , advertise
     , peers
+    , datumHotCacheSize
     } = options
 
 -- | Checks that command line options match a given 'HeadState'. This function
@@ -221,7 +223,8 @@ hydrate tracer env ledger initialChainState EventStore{eventSource, eventSink} e
     mapC stateChanged
       .| getZipSink
         ( (,)
-            <$> ZipSink (foldlC aggregateNodeState initialState)
+            -- Use 0 (unlimited) for replay since we're just restoring state
+            <$> ZipSink (foldlC (aggregateNodeState 0) initialState)
             <*> ZipSink (foldlC aggregateChainStateHistory $ initHistory initialChainState)
         )
 
@@ -355,9 +358,10 @@ processNextInput ::
 processNextInput HydraNode{nodeStateHandler, ledger, env} e now =
   modifyNodeState $ \s ->
     let outcome = HeadLogic.update env ledger now s e
-     in (outcome, aggregateState s outcome)
+     in (outcome, aggregateState datumHotCacheSize s outcome)
  where
   NodeStateHandler{modifyNodeState} = nodeStateHandler
+  Environment{datumHotCacheSize} = env
 
 processStateChanges :: (MonadSTM m, MonadTime m) => HydraNode tx m -> [StateChanged tx] -> m ()
 processStateChanges node stateChanges = do

@@ -12,6 +12,13 @@
 --
 -- This optimization is particularly beneficial for Hydra heads that hold
 -- many UTxOs with large inline datums for extended periods.
+--
+-- == Memory Optimization via Pruning
+--
+-- The cache can be pruned to remove datums that are no longer needed.
+-- Call 'pruneCache' with the current UTxO set to remove datums that are
+-- not referenced by any current UTxO. This keeps memory usage proportional
+-- to the number of UTxOs with inline datums, rather than growing unbounded.
 module Hydra.DatumCache (
   -- * Types
   DatumCache (..),
@@ -24,6 +31,12 @@ module Hydra.DatumCache (
 
   -- * Operations
   lookupDatum,
+  insertDatum,
+
+  -- * Cache Management
+  pruneCache,
+  pruneCacheWithLimit,
+  cacheSize,
 
   -- * UTxO Operations
   stripInlineDatumsFromUTxO,
@@ -32,6 +45,9 @@ module Hydra.DatumCache (
   -- * TxOut Operations
   stripInlineDatum,
   restoreInlineDatum,
+
+  -- * Datum Hash Extraction
+  extractDatumHashes,
 ) where
 
 import Hydra.Prelude
@@ -45,6 +61,7 @@ import Data.Aeson (object, withObject, (.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Types (Parser)
 import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Hydra.Cardano.Api (
   Hash,
   HashableScriptData,
@@ -55,9 +72,14 @@ import Hydra.Cardano.Api (
   hashScriptDataBytes,
  )
 import Hydra.Cardano.Api qualified as Api
+import Numeric.Natural (Natural)
 
 -- | A strict cache mapping datum hashes to their full datum content.
 -- Uses a strict Map to prevent thunk buildup.
+--
+-- The cache stores all datums that have been extracted from UTxOs.
+-- Use 'pruneCache' periodically to remove datums that are no longer
+-- referenced by any current UTxO.
 newtype DatumCache = DatumCache
   { unDatumCache :: Map (Hash ScriptData) HashableScriptData
   }
@@ -115,10 +137,15 @@ class HasDatumCache utxo where
   -- | Restore inline datums to a UTxO set using the provided cache.
   restoreDatums :: DatumCache -> utxo -> utxo
 
+  -- | Extract all datum hashes referenced by the UTxO set.
+  -- Used for cache pruning - only datums with these hashes need to be kept.
+  getDatumHashes :: utxo -> Set (Hash ScriptData)
+
 -- | Instance for the real Cardano UTxO type - actually performs datum stripping.
 instance HasDatumCache UTxO where
   stripDatums = stripInlineDatumsFromUTxO
   restoreDatums = restoreInlineDatumsToUTxO
+  getDatumHashes = extractDatumHashes
 
 -- | Create an empty datum cache.
 emptyCache :: DatumCache
@@ -127,6 +154,67 @@ emptyCache = DatumCache Map.empty
 -- | Look up a datum by its hash.
 lookupDatum :: Hash ScriptData -> DatumCache -> Maybe HashableScriptData
 lookupDatum hash (DatumCache cache) = Map.lookup hash cache
+
+-- | Insert a datum into the cache.
+insertDatum :: Hash ScriptData -> HashableScriptData -> DatumCache -> DatumCache
+insertDatum hash datum (DatumCache cache) =
+  DatumCache $! Map.insert hash datum cache
+
+-- | Prune the cache to only keep datums referenced by the given set of hashes.
+-- This removes datums that are no longer needed, reducing memory usage.
+--
+-- Call this after confirming a snapshot with the datum hashes from the
+-- confirmed UTxO set.
+pruneCache :: Set (Hash ScriptData) -> DatumCache -> DatumCache
+pruneCache keepHashes (DatumCache cache) =
+  DatumCache $! Map.restrictKeys cache keepHashes
+
+-- | Prune the cache with a size limit. First restricts to only the given hashes
+-- (UTxO-aligned pruning), then if the cache still exceeds the limit, evicts
+-- entries until the limit is satisfied.
+--
+-- The eviction strategy is deterministic: entries are sorted by their hash
+-- and the oldest (lowest hash values) are evicted first. This ensures
+-- consistent behavior across nodes.
+--
+-- A limit of 0 means unlimited (no size-based eviction).
+pruneCacheWithLimit :: Natural -> Set (Hash ScriptData) -> DatumCache -> DatumCache
+pruneCacheWithLimit maxSize keepHashes cache
+  | maxSize == 0 = prunedCache
+  | currentSize <= fromIntegral maxSize = prunedCache
+  | otherwise = evictToLimit maxSize prunedCache
+ where
+  prunedCache = pruneCache keepHashes cache
+  currentSize = cacheSize prunedCache
+
+-- | Evict entries from the cache until the size is at or below the limit.
+-- Uses deterministic eviction: entries are sorted by hash and lowest hashes
+-- are evicted first.
+evictToLimit :: Natural -> DatumCache -> DatumCache
+evictToLimit maxSize (DatumCache cache)
+  | Map.size cache <= fromIntegral maxSize = DatumCache cache
+  | otherwise =
+      let entries = Map.toAscList cache -- Sorted by hash
+          entriesToKeep = fromIntegral maxSize
+          keptEntries = drop (length entries - entriesToKeep) entries
+       in DatumCache $! Map.fromList keptEntries
+
+-- | Get the number of datums in the cache.
+cacheSize :: DatumCache -> Int
+cacheSize (DatumCache cache) = Map.size cache
+
+-- | Extract all datum hashes referenced by UTxOs in the set.
+-- This includes both inline datums (by computing their hash) and datum hash references.
+extractDatumHashes :: UTxO -> Set (Hash ScriptData)
+extractDatumHashes utxo =
+  Set.fromList $ mapMaybe extractHash $ map snd $ UTxO.toList utxo
+ where
+  extractHash :: TxOut Api.CtxUTxO -> Maybe (Hash ScriptData)
+  extractHash (Api.TxOut _ _ datum _) =
+    case datum of
+      Api.TxOutDatumHash h -> Just h
+      Api.TxOutDatumInline sd -> Just (hashScriptDataBytes sd)
+      _ -> Nothing
 
 -- | Strip inline datums from all TxOuts in a UTxO set, replacing them with
 -- datum hashes. Returns the modified UTxO and a cache containing the extracted datums.
@@ -144,7 +232,7 @@ stripInlineDatumsFromUTxO utxo =
     case stripInlineDatum txOut of
       (txOut', Nothing) -> ((txIn, txOut') : acc, cache)
       (txOut', Just (hash, datum)) ->
-        let !cache' = DatumCache $ Map.insert hash datum (unDatumCache cache)
+        let !cache' = insertDatum hash datum cache
          in ((txIn, txOut') : acc, cache')
 
 -- | Restore inline datums to all TxOuts in a UTxO set using the provided cache.

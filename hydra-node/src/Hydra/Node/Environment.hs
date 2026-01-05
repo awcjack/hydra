@@ -22,6 +22,9 @@ data Environment = Environment
   , depositPeriod :: DepositPeriod
   , configuredPeers :: Text
   -- ^ Configured peers for the network layer, used for comparison on etcd errors.
+  , datumHotCacheSize :: Natural
+  -- ^ Maximum size of the datum hot cache. When exceeded, oldest entries are
+  -- evicted after snapshot confirmation. 0 means unlimited (default behavior).
   }
   deriving stock (Generic, Show, Eq)
   deriving anyclass (ToJSON, FromJSON)

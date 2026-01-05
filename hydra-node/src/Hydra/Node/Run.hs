@@ -154,7 +154,8 @@ run opts = do
       Just rotationConfig -> do
         let initialState = initNodeState initialChainState
         let aggregator :: (IsChainState tx, HasDatumCache (UTxOType tx)) => NodeState tx -> StateEvent tx -> NodeState tx
-            aggregator s StateEvent{stateChanged} = aggregateNodeState s stateChanged
+            -- Use 0 (unlimited) for rotation aggregator since we're just checkpointing state
+            aggregator s StateEvent{stateChanged} = aggregateNodeState 0 s stateChanged
         newRotatedEventStore rotationConfig initialState aggregator mkCheckpoint eventStore
 
   RunOptions

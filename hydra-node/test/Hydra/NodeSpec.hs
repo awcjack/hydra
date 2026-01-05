@@ -302,6 +302,7 @@ spec = parallel $ do
             , depositPeriod = defaultDepositPeriod
             , participants = error "should not be recorded in head state"
             , configuredPeers = ""
+            , datumHotCacheSize = 0
             }
         nodeState = inInitialState [alice, bob]
 
@@ -475,6 +476,7 @@ testHydraNode tracer signingKey otherParties contestationPeriod inputs = do
       , depositPeriod = defaultDepositPeriod
       , participants
       , configuredPeers = ""
+      , datumHotCacheSize = 0
       }
 
   party = deriveParty signingKey

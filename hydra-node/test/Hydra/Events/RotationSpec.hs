@@ -278,4 +278,4 @@ trivialCheckpoint :: [TrivialEvent] -> TrivialEvent
 trivialCheckpoint = sum
 
 mkAggregator :: (IsChainState tx, HasDatumCache (UTxOType tx)) => NodeState tx -> StateEvent tx -> NodeState tx
-mkAggregator s StateEvent{stateChanged} = aggregateNodeState s stateChanged
+mkAggregator s StateEvent{stateChanged} = aggregateNodeState 0 s stateChanged

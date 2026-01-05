@@ -78,6 +78,7 @@ spec =
             , depositPeriod = defaultDepositPeriod
             , participants = deriveOnChainId <$> threeParties
             , configuredPeers = ""
+            , datumHotCacheSize = 0
             }
         aliceEnv =
           Environment
@@ -88,6 +89,7 @@ spec =
             , depositPeriod = defaultDepositPeriod
             , participants = deriveOnChainId <$> threeParties
             , configuredPeers = ""
+            , datumHotCacheSize = 0
             }
 
     describe "Coordinated Head Protocol" $ do
@@ -1545,7 +1547,8 @@ step input = do
   StepState{nodeState, env, ledger} <- get
   now <- getCurrentTime
   let outcome = update env ledger now nodeState input
-  let nodeState' = aggregateState nodeState outcome
+  -- Use 0 (unlimited) for tests since cache size limiting is not under test here
+  let nodeState' = aggregateState 0 nodeState outcome
   put StepState{env, ledger, nodeState = nodeState'}
   pure outcome
 

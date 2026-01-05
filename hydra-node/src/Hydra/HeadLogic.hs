@@ -38,10 +38,12 @@ import Hydra.Chain (
   pushNewState,
   rollbackHistory,
  )
+import Numeric.Natural (Natural)
 import Hydra.Chain.ChainState (ChainSlot, IsChainState (..))
 import Hydra.DatumCache (
   DatumCache,
   HasDatumCache (..),
+  pruneCacheWithLimit,
   restoreDatums,
  )
 import Hydra.HeadLogic.Error (
@@ -1610,10 +1612,11 @@ handleClientInput env ledger _now currentSlot pendingDeposits st ev = case (st, 
 -- * NodeState aggregate
 
 -- | Reflect 'StateChanged' events onto the 'NodeState' aggregateNodeState.
-aggregateNodeState :: (IsChainState tx, HasDatumCache (UTxOType tx)) => NodeState tx -> StateChanged tx -> NodeState tx
-aggregateNodeState nodeState sc =
+-- The 'Natural' parameter is the datumHotCacheSize configuration (0 = unlimited).
+aggregateNodeState :: (IsChainState tx, HasDatumCache (UTxOType tx)) => Natural -> NodeState tx -> StateChanged tx -> NodeState tx
+aggregateNodeState datumHotCacheSize nodeState sc =
   let currentPendingDeposits = pendingDeposits nodeState
-      st = aggregate (headState nodeState) sc
+      st = aggregate datumHotCacheSize (headState nodeState) sc
    in case sc of
         HeadOpened{chainState} ->
           nodeState
@@ -1687,8 +1690,8 @@ aggregateNodeState nodeState sc =
 -- * HeadState aggregate
 
 -- | Reflect 'StateChanged' events onto the 'HeadState' aggregate.
-aggregate :: (IsChainState tx, HasDatumCache (UTxOType tx)) => HeadState tx -> StateChanged tx -> HeadState tx
-aggregate st = \case
+aggregate :: (IsChainState tx, HasDatumCache (UTxOType tx)) => Natural -> HeadState tx -> StateChanged tx -> HeadState tx
+aggregate datumHotCacheSize st = \case
   NetworkConnected -> st
   NetworkDisconnected -> st
   NetworkVersionMismatch{} -> st
@@ -1847,21 +1850,27 @@ aggregate st = \case
       _otherState -> st
   SnapshotConfirmed{snapshot, signatures} ->
     case st of
-      Open os@OpenState{coordinatedHeadState} ->
-        Open
-          os
-            { coordinatedHeadState =
-                coordinatedHeadState
-                  { confirmedSnapshot =
-                      ConfirmedSnapshot
-                        { snapshot
-                        , signatures
-                        }
-                  , seenSnapshot = LastSeenSnapshot number
-                  }
-            }
+      Open os@OpenState{coordinatedHeadState, datumCache} ->
+        -- Prune the datum cache to only keep datums referenced by current localUTxO.
+        -- This prevents unbounded cache growth as transactions are confirmed.
+        -- Also applies the configured size limit for additional memory control.
+        let !prunedCache = pruneCacheWithLimit datumHotCacheSize (getDatumHashes localUTxO) datumCache
+         in Open
+              os
+                { coordinatedHeadState =
+                    coordinatedHeadState
+                      { confirmedSnapshot =
+                          ConfirmedSnapshot
+                            { snapshot
+                            , signatures
+                            }
+                      , seenSnapshot = LastSeenSnapshot number
+                      }
+                , datumCache = prunedCache
+                }
        where
         Snapshot{number} = snapshot
+        CoordinatedHeadState{localUTxO} = coordinatedHeadState
       _otherState -> st
   LocalStateCleared{snapshotNumber} ->
     case st of
@@ -2006,11 +2015,12 @@ aggregate st = \case
 
 aggregateState ::
   (IsChainState tx, HasDatumCache (UTxOType tx)) =>
+  Natural ->
   NodeState tx ->
   Outcome tx ->
   NodeState tx
-aggregateState s outcome =
-  foldl' aggregateNodeState s $ collectStateChanged outcome
+aggregateState datumHotCacheSize s outcome =
+  foldl' (aggregateNodeState datumHotCacheSize) s $ collectStateChanged outcome
  where
   collectStateChanged :: Outcome tx -> [StateChanged tx]
   collectStateChanged = \case

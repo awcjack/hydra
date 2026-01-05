@@ -49,6 +49,7 @@ spec = do
                 , depositPeriod = defaultDepositPeriod
                 , participants = deriveOnChainId <$> threeParties
                 , configuredPeers = ""
+                , datumHotCacheSize = 0
                 }
 
     let coordinatedHeadState =
@@ -205,6 +206,7 @@ prop_singleMemberHeadAlwaysSnapshotOnReqTx sn = monadicIO $ do
             , depositPeriod = defaultDepositPeriod
             , participants = [deriveOnChainId party]
             , configuredPeers = ""
+            , datumHotCacheSize = 0
             }
     st =
       CoordinatedHeadState
