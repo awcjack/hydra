@@ -215,6 +215,9 @@ data RunOptions = RunOptions
   , ledgerConfig :: LedgerConfig
   , whichEtcd :: WhichEtcd
   , apiTransactionTimeout :: ApiTransactionTimeout
+  , datumHotCacheSize :: Natural
+  -- ^ Number of recently used datums to keep in memory for fast access.
+  -- This improves performance for recent transactions. Default: 100.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToJSON, FromJSON)
@@ -251,6 +254,7 @@ instance Arbitrary RunOptions where
     ledgerConfig <- arbitrary
     whichEtcd <- arbitrary
     apiTransactionTimeout <- arbitrary
+    datumHotCacheSize <- fromInteger <$> choose (0, 1000)
     pure $
       RunOptions
         { verbosity
@@ -271,6 +275,7 @@ instance Arbitrary RunOptions where
         , ledgerConfig
         , whichEtcd
         , apiTransactionTimeout
+        , datumHotCacheSize
         }
 
   shrink = genericShrink
@@ -297,9 +302,14 @@ defaultRunOptions =
     , ledgerConfig = defaultLedgerConfig
     , whichEtcd = EmbeddedEtcd
     , apiTransactionTimeout = 300
+    , datumHotCacheSize = defaultDatumHotCacheSize
     }
  where
   localhost = IPv4 $ toIPv4 [127, 0, 0, 1]
+
+-- | Default number of datums to keep in the hot cache.
+defaultDatumHotCacheSize :: Natural
+defaultDatumHotCacheSize = 100
 
 -- | Parser for running the cardano-node with all its 'RunOptions'.
 runOptionsParser :: Parser RunOptions
@@ -323,6 +333,7 @@ runOptionsParser =
     <*> ledgerConfigParser
     <*> whichEtcdParser
     <*> apiTransactionTimeoutParser
+    <*> datumHotCacheSizeParser
 
 whichEtcdParser :: Parser WhichEtcd
 whichEtcdParser =
@@ -815,6 +826,21 @@ apiTransactionTimeoutParser =
           \takes longer than this, it will be cancelled."
     )
 
+datumHotCacheSizeParser :: Parser Natural
+datumHotCacheSizeParser =
+  option
+    auto
+    ( long "datum-hot-cache-size"
+        <> metavar "COUNT"
+        <> value defaultDatumHotCacheSize
+        <> showDefault
+        <> completer (listCompleter ["50", "100", "200", "500"])
+        <> help
+          "Number of recently used datums to keep in memory for fast access. \
+          \Higher values improve performance for recent transactions but use more memory. \
+          \Set to 0 to disable the hot cache."
+    )
+
 startChainFromParser :: Parser ChainPoint
 startChainFromParser =
   option
@@ -1033,6 +1059,7 @@ toArgs
     , ledgerConfig
     , whichEtcd
     , apiTransactionTimeout
+    , datumHotCacheSize
     } =
     isVerbose verbosity
       <> ["--node-id", unpack nId]
@@ -1052,6 +1079,7 @@ toArgs
       <> argsChainConfig chainConfig
       <> argsLedgerConfig
       <> ["--api-transaction-timeout", show apiTransactionTimeout]
+      <> ["--datum-hot-cache-size", show datumHotCacheSize]
    where
     (NodeId nId) = nodeId
 

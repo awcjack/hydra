@@ -32,6 +32,7 @@ import Hydra.Chain (
 import Hydra.Chain.ChainState (ChainSlot (..), IsChainState, chainStateSlot)
 import Hydra.Chain.Direct.State (ChainStateAt (..))
 import Hydra.Chain.Direct.TimeHandle (TimeHandle, mkTimeHandle, safeZone, slotToUTCTime)
+import Hydra.DatumCache (HasDatumCache, emptyCache)
 import Hydra.HeadLogic (ClosedState (..), CoordinatedHeadState (..), Effect (..), HeadState (..), InitialState (..), Input (..), LogicError (..), OpenState (..), Outcome (..), RequirementFailure (..), SideLoadRequirementFailure (..), StateChanged (..), TTL, WaitReason (..), aggregateState, cause, noop, update)
 import Hydra.HeadLogic.State (IdleState (..), SeenSnapshot (..), getHeadParameters)
 import Hydra.Ledger (Ledger (..), ValidationError (..))
@@ -52,7 +53,7 @@ import Hydra.Tx.ContestationPeriod qualified as CP
 import Hydra.Tx.Crypto (aggregate, generateSigningKey, sign)
 import Hydra.Tx.Crypto qualified as Crypto
 import Hydra.Tx.HeadParameters (HeadParameters (..))
-import Hydra.Tx.IsTx (IsTx (..))
+import Hydra.Tx.IsTx (IsTx (..), UTxOType)
 import Hydra.Tx.Party (Party (..), deriveParty)
 import Hydra.Tx.Snapshot (ConfirmedSnapshot (..), Snapshot (..), SnapshotNumber, SnapshotVersion, getSnapshot)
 import Test.Gen.Cardano.Api.Typed (genBlockHeaderHash)
@@ -77,6 +78,7 @@ spec =
             , depositPeriod = defaultDepositPeriod
             , participants = deriveOnChainId <$> threeParties
             , configuredPeers = ""
+            , datumHotCacheSize = 0
             }
         aliceEnv =
           Environment
@@ -87,6 +89,7 @@ spec =
             , depositPeriod = defaultDepositPeriod
             , participants = deriveOnChainId <$> threeParties
             , configuredPeers = ""
+            , datumHotCacheSize = 0
             }
 
     describe "Coordinated Head Protocol" $ do
@@ -1130,6 +1133,7 @@ spec =
                         , chainState = ChainStateAt{spendableUTxO = mempty, recordedAt = Just $ ChainPoint 0 blockHash}
                         , headId = testHeadId
                         , headSeed = testHeadSeed
+                        , datumCache = emptyCache
                         }
                 , pendingDeposits = mempty
                 , currentSlot = ChainSlot . fromIntegral . unSlotNo $ 0
@@ -1226,6 +1230,7 @@ spec =
                         , chainState = Prelude.error "should not be used"
                         , headId = testHeadId
                         , headSeed = testHeadSeed
+                        , datumCache = emptyCache
                         }
                 , pendingDeposits = mempty
                 , currentSlot = ChainSlot . fromIntegral . unSlotNo $ slotNo + 1
@@ -1267,6 +1272,7 @@ spec =
                       , chainState = Prelude.error "should not be used"
                       , headId = testHeadId
                       , headSeed = testHeadSeed
+                      , datumCache = emptyCache
                       }
               , pendingDeposits = mempty
               , currentSlot = ChainSlot 1
@@ -1466,6 +1472,7 @@ inOpenState' parties coordinatedHeadState =
             , chainState = SimpleChainState{slot = chainSlot}
             , headId = testHeadId
             , headSeed = testHeadSeed
+            , datumCache = emptyCache
             }
     , pendingDeposits = mempty
     , currentSlot = chainSlot
@@ -1533,14 +1540,15 @@ getState = nodeState <$> get
 
 -- | Calls 'update' and 'aggregate' to drive the 'runHeadLogic' monad forward.
 step ::
-  (MonadState (StepState tx) m, IsChainState tx, MonadTime m) =>
+  (MonadState (StepState tx) m, IsChainState tx, HasDatumCache (UTxOType tx), MonadTime m) =>
   Input tx ->
   m (Outcome tx)
 step input = do
   StepState{nodeState, env, ledger} <- get
   now <- getCurrentTime
   let outcome = update env ledger now nodeState input
-  let nodeState' = aggregateState nodeState outcome
+  -- Use 0 (unlimited) for tests since cache size limiting is not under test here
+  let nodeState' = aggregateState 0 nodeState outcome
   put StepState{env, ledger, nodeState = nodeState'}
   pure outcome
 

@@ -32,6 +32,7 @@ import Hydra.Cardano.Api (LedgerEra)
 import Hydra.Chain (Chain (..))
 import Hydra.Chain.ChainState (IsChainState)
 import Hydra.Chain.Direct.State ()
+import Hydra.DatumCache (HasDatumCache)
 import Hydra.Events (EventSink (..), EventSource (..))
 import Hydra.HeadLogic (
   HeadState (..),
@@ -81,7 +82,7 @@ data APIServerConfig = APIServerConfig
 
 withAPIServer ::
   forall tx.
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   APIServerConfig ->
   Environment ->
   FilePath ->
@@ -99,7 +100,8 @@ withAPIServer config env stateFile party eventSource tracer chain pparams server
     responseChannel <- newBroadcastTChanIO
     -- Initialize our read models from stored events
     -- NOTE: we do not keep the stored events around in memory
-    nodeStateP <- mkProjection "nodeStateP" (initNodeState mkChainState) aggregateNodeState
+    -- Use 0 (unlimited) for API projections since we're just tracking state for display
+    nodeStateP <- mkProjection "nodeStateP" (initNodeState mkChainState) (aggregateNodeState 0)
     -- XXX: We never subscribe to changes of commitInfoP et al directly so a
     -- single read model and normal functions mapping from HeadState ->
     -- CommitInfo etc. would suffice and are less fragile

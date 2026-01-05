@@ -26,6 +26,7 @@ import Hydra.Chain.ChainState (IsChainState (..))
 import Hydra.Chain.Direct (DirectBackend (..))
 import Hydra.Chain.Direct.State (initialChainState)
 import Hydra.Chain.Offline (loadGenesisFile, withOfflineChain)
+import Hydra.DatumCache (HasDatumCache)
 import Hydra.Events (EventSink)
 import Hydra.Events.FileBased (mkFileBasedEventStore)
 import Hydra.Events.Rotation (EventStore (..), RotationConfig (..), newRotatedEventStore)
@@ -61,6 +62,7 @@ import Hydra.Options (
   validateRunOptions,
  )
 import Hydra.Persistence (createPersistenceIncremental)
+import Hydra.Tx.IsTx (UTxOType)
 import Hydra.Utils (readJsonFileThrow)
 import System.FilePath ((</>))
 
@@ -151,8 +153,9 @@ run opts = do
         pure eventStore
       Just rotationConfig -> do
         let initialState = initNodeState initialChainState
-        let aggregator :: IsChainState tx => NodeState tx -> StateEvent tx -> NodeState tx
-            aggregator s StateEvent{stateChanged} = aggregateNodeState s stateChanged
+        let aggregator :: (IsChainState tx, HasDatumCache (UTxOType tx)) => NodeState tx -> StateEvent tx -> NodeState tx
+            -- Use 0 (unlimited) for rotation aggregator since we're just checkpointing state
+            aggregator s StateEvent{stateChanged} = aggregateNodeState 0 s stateChanged
         newRotatedEventStore rotationConfig initialState aggregator mkCheckpoint eventStore
 
   RunOptions

@@ -51,4 +51,5 @@ testEnvironment =
     , depositPeriod = DepositPeriod 20
     , participants = deriveOnChainId <$> [alice, bob, carol]
     , configuredPeers = ""
+    , datumHotCacheSize = 0 -- Unlimited for tests
     }

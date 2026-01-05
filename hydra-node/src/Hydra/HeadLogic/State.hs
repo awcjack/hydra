@@ -8,6 +8,7 @@ import Hydra.Prelude
 
 import Data.Map qualified as Map
 import Hydra.Chain.ChainState (IsChainState (..))
+import Hydra.DatumCache (DatumCache)
 import Hydra.Tx (
   HeadId,
   HeadParameters,
@@ -140,6 +141,10 @@ data OpenState tx = OpenState
   , chainState :: ChainStateType tx
   , headId :: HeadId
   , headSeed :: HeadSeed
+  , datumCache :: !DatumCache
+  -- ^ Cache of inline datums extracted from UTxOs for memory optimization.
+  -- This allows storing datum hashes in the UTxO set while keeping the full
+  -- datum data available for transaction validation.
   }
   deriving stock (Generic)
 
@@ -156,13 +161,14 @@ instance (ArbitraryIsTx tx, Arbitrary (ChainStateType tx)) => Arbitrary (OpenSta
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
+      <*> arbitrary
 
 -- | Off-chain state of the Coordinated Head protocol.
 data CoordinatedHeadState tx = CoordinatedHeadState
-  { localUTxO :: UTxOType tx
+  { localUTxO :: !(UTxOType tx)
   -- ^ The latest UTxO resulting from applying 'localTxs' to
   -- 'confirmedSnapshot'. Spec: L̂
-  , localTxs :: [tx]
+  , localTxs :: ![tx]
   -- ^ List of transactions applied locally and pending inclusion in a snapshot.
   -- Ordering in this list is important as transactions are added in order of
   -- application. Spec: T̂

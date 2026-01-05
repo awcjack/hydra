@@ -3113,6 +3113,7 @@ components:
       - participants
       - contestationPeriod
       - depositPeriod
+      - datumHotCacheSize
       - configuredPeers
       additionalProperties: false
       properties:
@@ -3132,6 +3133,9 @@ components:
           $ref: "api.yaml#/components/schemas/ContestationPeriod"
         depositPeriod:
           $ref: "api.yaml#/components/schemas/DepositPeriod"
+        datumHotCacheSize:
+          type: integer
+          description: Maximum number of datums to keep in the hot cache (0 = unlimited)
         configuredPeers:
           type: string
 
@@ -3472,6 +3476,7 @@ components:
         - chainState
         - headId
         - headSeed
+        - datumCache
       properties:
         parameters:
           $ref: "api.yaml#/components/schemas/HeadParameters"
@@ -3483,6 +3488,38 @@ components:
           $ref: "api.yaml#/components/schemas/HeadId"
         headSeed:
           $ref: "api.yaml#/components/schemas/HeadSeed"
+        datumCache:
+          $ref: "api.yaml#/components/schemas/DatumCache"
+
+    DatumCache:
+      type: object
+      additionalProperties: false
+      description: |
+        A cache for inline datums extracted from UTxOs to reduce memory usage.
+        Contains a list of datum entries, each with a hash and the CBOR-encoded datum.
+      required:
+        - entries
+      properties:
+        entries:
+          type: array
+          description: List of cached datum entries
+          items:
+            $ref: "api.yaml#/components/schemas/DatumCacheEntry"
+
+    DatumCacheEntry:
+      type: object
+      additionalProperties: false
+      description: A single entry in the datum cache
+      required:
+        - hash
+        - datum
+      properties:
+        hash:
+          type: string
+          description: The hash of the script data (hex-encoded)
+        datum:
+          type: string
+          description: The CBOR-encoded script data (hex-encoded)
 
     ClosedState:
       type: object

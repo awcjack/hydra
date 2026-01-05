@@ -13,9 +13,11 @@ import Hydra.API.ServerOutput (ClientMessage (..), ServerOutput (..), TimedServe
 import Hydra.Cardano.Api (SigningKey)
 import Hydra.Chain (Chain (..), ChainEvent (..), OnChainTx (..), PostTxError (..))
 import Hydra.Chain.ChainState (ChainSlot (ChainSlot), IsChainState)
+import Hydra.DatumCache (HasDatumCache)
 import Hydra.Events (EventSink (..), EventSource (..), getEventId)
 import Hydra.Events.Rotation (EventStore (..), LogId)
 import Hydra.HeadLogic (Input (..), TTL)
+import Hydra.HeadLogic.Input (inputPriority)
 import Hydra.HeadLogic.Outcome (StateChanged (HeadInitialized), genStateChanged)
 import Hydra.HeadLogic.StateEvent (StateEvent (..), genStateEvent)
 import Hydra.HeadLogicSpec (inInitialState, receiveMessage, receiveMessageFrom, testSnapshot)
@@ -42,6 +44,7 @@ import Hydra.Options (defaultContestationPeriod, defaultDepositPeriod)
 import Hydra.Tx.ContestationPeriod (ContestationPeriod (..))
 import Hydra.Tx.Crypto (HydraKey, sign)
 import Hydra.Tx.HeadParameters (HeadParameters (..))
+import Hydra.Tx.IsTx (UTxOType)
 import Hydra.Tx.Party (Party, deriveParty)
 import Test.Hydra.Node.Fixture (testEnvironment)
 import Test.Hydra.Tx.Fixture (
@@ -300,6 +303,7 @@ spec = parallel $ do
             , depositPeriod = defaultDepositPeriod
             , participants = error "should not be recorded in head state"
             , configuredPeers = ""
+            , datumHotCacheSize = 0
             }
         nodeState = inInitialState [alice, bob]
 
@@ -342,7 +346,7 @@ primeWith inputs node@HydraNode{inputQueue = InputQueue{enqueue}, nodeStateHandl
   now <- getCurrentTime
   chainSlot <- currentSlot <$> atomically queryNodeState
   let tick = ChainInput $ Tick now (chainSlot + 1)
-  forM_ (tick : inputs) enqueue
+  forM_ (tick : inputs) $ \input -> enqueue (inputPriority input) input
   pure node
 
 -- | Convert a 'DraftHydraNode' to a 'HydraNode' by providing mock implementations.
@@ -438,7 +442,7 @@ observationInput observedTx =
     }
 
 runToCompletion ::
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   HydraNode tx IO ->
   IO ()
 runToCompletion node@HydraNode{inputQueue = InputQueue{isEmpty}} = go
@@ -473,6 +477,7 @@ testHydraNode tracer signingKey otherParties contestationPeriod inputs = do
       , depositPeriod = defaultDepositPeriod
       , participants
       , configuredPeers = ""
+      , datumHotCacheSize = 0
       }
 
   party = deriveParty signingKey

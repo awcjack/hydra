@@ -12,7 +12,6 @@ import Hydra.Prelude
 
 import Conduit (MonadUnliftIO, ZipSink (..), foldMapC, foldlC, mapC, mapM_C, runConduitRes, (.|))
 import Control.Concurrent.Class.MonadSTM (
-  stateTVar,
   writeTVar,
  )
 import Control.Monad.Trans.Writer (execWriter, tell)
@@ -30,6 +29,7 @@ import Hydra.Chain (
   initHistory,
  )
 import Hydra.Chain.ChainState (ChainStateType, IsChainState)
+import Hydra.DatumCache (HasDatumCache)
 import Hydra.Events (EventId, EventSink (..), EventSource (..), getEventId, putEventsToSinks)
 import Hydra.Events.Rotation (EventStore (..))
 import Hydra.HeadLogic (
@@ -43,12 +43,13 @@ import Hydra.HeadLogic (
   aggregateState,
  )
 import Hydra.HeadLogic qualified as HeadLogic
+import Hydra.HeadLogic.Input (MessagePriority (..), inputPriority)
 import Hydra.HeadLogic.Outcome (StateChanged (..))
 import Hydra.HeadLogic.State (getHeadParameters)
 import Hydra.HeadLogic.StateEvent (StateEvent (..))
 import Hydra.Ledger (Ledger)
 import Hydra.Logging (Tracer, traceWith)
-import Hydra.Network (Host (..), Network (..), NetworkCallback (..))
+import Hydra.Network (Connectivity, Host (..), Network (..), NetworkCallback (..))
 import Hydra.Network.Authenticate (Authenticated (..))
 import Hydra.Network.Message (Message (..), NetworkEvent (..))
 import Hydra.Node.Environment (Environment (..))
@@ -57,7 +58,7 @@ import Hydra.Node.ParameterMismatch (ParamMismatch (..), ParameterMismatch (..))
 import Hydra.Node.State (NodeState (..), initNodeState)
 import Hydra.Node.Util (readFileTextEnvelopeThrow)
 import Hydra.Options (CardanoChainConfig (..), ChainConfig (..), RunOptions (..), defaultContestationPeriod, defaultDepositPeriod)
-import Hydra.Tx (HasParty (..), HeadParameters (..), Party (..), deriveParty)
+import Hydra.Tx (HasParty (..), HeadParameters (..), IsTx (..), Party (..), deriveParty)
 import Hydra.Tx.Utils (verificationKeyToOnChainId)
 
 -- * Environment Handling
@@ -77,6 +78,7 @@ initEnvironment options = do
       , contestationPeriod
       , depositPeriod
       , configuredPeers
+      , datumHotCacheSize
       }
  where
   -- XXX: This is mostly a cardano-specific initialization step of loading
@@ -117,6 +119,7 @@ initEnvironment options = do
     , chainConfig
     , advertise
     , peers
+    , datumHotCacheSize
     } = options
 
 -- | Checks that command line options match a given 'HeadState'. This function
@@ -174,7 +177,7 @@ instance HasParty (DraftHydraNode tx m) where
 -- | Hydrate a 'DraftHydraNode' by loading events from source, re-aggregate node
 -- state and sending events to sinks while doing so.
 hydrate ::
-  (IsChainState tx, MonadDelay m, MonadLabelledSTM m, MonadAsync m, MonadThrow m, MonadUnliftIO m) =>
+  (IsChainState tx, HasDatumCache (UTxOType tx), MonadDelay m, MonadLabelledSTM m, MonadAsync m, MonadThrow m, MonadUnliftIO m) =>
   Tracer m (HydraNodeLog tx) ->
   Environment ->
   Ledger tx ->
@@ -221,17 +224,18 @@ hydrate tracer env ledger initialChainState EventStore{eventSource, eventSink} e
     mapC stateChanged
       .| getZipSink
         ( (,)
-            <$> ZipSink (foldlC aggregateNodeState initialState)
+            -- Use 0 (unlimited) for replay since we're just restoring state
+            <$> ZipSink (foldlC (aggregateNodeState 0) initialState)
             <*> ZipSink (foldlC aggregateChainStateHistory $ initHistory initialChainState)
         )
 
 wireChainInput :: DraftHydraNode tx m -> (ChainEvent tx -> m ())
-wireChainInput node = enqueue . ChainInput
+wireChainInput node = enqueue HighPriority . ChainInput
  where
   DraftHydraNode{inputQueue = InputQueue{enqueue}} = node
 
 wireClientInput :: DraftHydraNode tx m -> (ClientInput tx -> m ())
-wireClientInput node = enqueue . ClientInput
+wireClientInput node = enqueue HighPriority . ClientInput
  where
   DraftHydraNode{inputQueue = InputQueue{enqueue}} = node
 
@@ -239,9 +243,12 @@ wireNetworkInput :: DraftHydraNode tx m -> NetworkCallback (Authenticated (Messa
 wireNetworkInput node =
   NetworkCallback
     { deliver = \Authenticated{party = sender, payload = msg} ->
-        enqueue $ mkNetworkInput sender msg
+        let input = mkNetworkInput sender msg
+         in enqueue (inputPriority input) input
     , onConnectivity =
-        enqueue . NetworkInput 1 . ConnectivityEvent
+        let input :: Connectivity -> Input tx
+            input = NetworkInput 1 . ConnectivityEvent
+         in enqueue HighPriority . input
     }
  where
   DraftHydraNode{inputQueue = InputQueue{enqueue}} = node
@@ -287,6 +294,7 @@ runHydraNode ::
   , MonadAsync m
   , MonadTime m
   , IsChainState tx
+  , HasDatumCache (UTxOType tx)
   ) =>
   HydraNode tx m ->
   m ()
@@ -300,6 +308,7 @@ stepHydraNode ::
   , MonadAsync m
   , MonadTime m
   , IsChainState tx
+  , HasDatumCache (UTxOType tx)
   ) =>
   HydraNode tx m ->
   m ()
@@ -322,7 +331,9 @@ stepHydraNode node = do
   maybeReenqueue q@Queued{queuedId, queuedItem} =
     case queuedItem of
       NetworkInput ttl msg
-        | ttl > 0 -> reenqueue waitDelay q{queuedItem = NetworkInput (ttl - 1) msg}
+        | ttl > 0 ->
+            let newItem = NetworkInput (ttl - 1) msg
+             in reenqueue (inputPriority newItem) waitDelay q{queuedItem = newItem}
       _ -> traceWith tracer $ DroppedFromQueue{inputId = queuedId, input = queuedItem}
 
   Environment{party} = env
@@ -345,7 +356,7 @@ waitDelay = 0.1
 
 -- | Monadic interface around 'Hydra.Logic.update'.
 processNextInput ::
-  IsChainState tx =>
+  (IsChainState tx, HasDatumCache (UTxOType tx)) =>
   HydraNode tx m ->
   Input tx ->
   UTCTime ->
@@ -353,9 +364,10 @@ processNextInput ::
 processNextInput HydraNode{nodeStateHandler, ledger, env} e now =
   modifyNodeState $ \s ->
     let outcome = HeadLogic.update env ledger now s e
-     in (outcome, aggregateState s outcome)
+     in (outcome, aggregateState datumHotCacheSize s outcome)
  where
   NodeStateHandler{modifyNodeState} = nodeStateHandler
+  Environment{datumHotCacheSize} = env
 
 processStateChanges :: (MonadSTM m, MonadTime m) => HydraNode tx m -> [StateChanged tx] -> m ()
 processStateChanges node stateChanges = do
@@ -391,7 +403,7 @@ processEffects node tracer inputId effects = do
       OnChainEffect{postChainTx} ->
         postTx postChainTx
           `catch` \(postTxError :: PostTxError tx) ->
-            enqueue . ChainInput $ PostTxError{postChainTx, postTxError, failingTx = Nothing}
+            enqueue HighPriority . ChainInput $ PostTxError{postChainTx, postTxError, failingTx = Nothing}
     traceWith tracer $ EndEffect party inputId effectId
 
   HydraNode
@@ -423,7 +435,11 @@ createNodeStateHandler lastSeenEventId initialState = do
   ns <- newLabelledTVarIO "node-state" initialState
   pure
     NodeStateHandler
-      { modifyNodeState = stateTVar ns
+      { modifyNodeState = \f -> do
+          s <- readTVar ns
+          let (a, !s') = f s
+          writeTVar ns s'
+          pure a
       , queryNodeState = readTVar ns
       , getNextEventId = do
           eventId <- readTVar nextEventIdV

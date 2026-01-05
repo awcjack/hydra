@@ -42,6 +42,7 @@
                 },
                 "tag": "CardanoChainConfig"
             },
+            "datumHotCacheSize": 100,
             "hydraSigningKey": "b/c.sk",
             "hydraVerificationKeys": [
                 "b/a.vk",
@@ -93,6 +94,7 @@
                 "offlineHeadSeed": "605a4786e76db4b28c3668751db34615",
                 "tag": "OfflineChainConfig"
             },
+            "datumHotCacheSize": 100,
             "hydraSigningKey": "a/c.sk",
             "hydraVerificationKeys": [
                 "c.vk",
@@ -179,6 +181,7 @@
                 },
                 "tag": "CardanoChainConfig"
             },
+            "datumHotCacheSize": 100,
             "hydraSigningKey": "a.sk",
             "hydraVerificationKeys": [
                 "a/b/c.vk",
@@ -233,6 +236,7 @@
                 "offlineHeadSeed": "329e98b0b3a9efc003e42da13950a34f",
                 "tag": "OfflineChainConfig"
             },
+            "datumHotCacheSize": 100,
             "hydraSigningKey": "b/c.sk",
             "hydraVerificationKeys": [
                 "b/a.vk"
@@ -297,6 +301,7 @@
                 "startChainFrom": null,
                 "tag": "CardanoChainConfig"
             },
+            "datumHotCacheSize": 100,
             "hydraSigningKey": "b/c/c/b/a/b.sk",
             "hydraVerificationKeys": [
                 "b.vk"

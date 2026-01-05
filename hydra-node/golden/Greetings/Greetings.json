@@ -5,6 +5,7 @@
             "env": {
                 "configuredPeers": "",
                 "contestationPeriod": 43200,
+                "datumHotCacheSize": 0,
                 "depositPeriod": 78099,
                 "otherParties": [],
                 "participants": [],
