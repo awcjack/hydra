@@ -17,6 +17,7 @@ import Hydra.DatumCache (HasDatumCache)
 import Hydra.Events (EventSink (..), EventSource (..), getEventId)
 import Hydra.Events.Rotation (EventStore (..), LogId)
 import Hydra.HeadLogic (Input (..), TTL)
+import Hydra.HeadLogic.Input (inputPriority)
 import Hydra.HeadLogic.Outcome (StateChanged (HeadInitialized), genStateChanged)
 import Hydra.HeadLogic.StateEvent (StateEvent (..), genStateEvent)
 import Hydra.HeadLogicSpec (inInitialState, receiveMessage, receiveMessageFrom, testSnapshot)
@@ -345,7 +346,7 @@ primeWith inputs node@HydraNode{inputQueue = InputQueue{enqueue}, nodeStateHandl
   now <- getCurrentTime
   chainSlot <- currentSlot <$> atomically queryNodeState
   let tick = ChainInput $ Tick now (chainSlot + 1)
-  forM_ (tick : inputs) enqueue
+  forM_ (tick : inputs) $ \input -> enqueue (inputPriority input) input
   pure node
 
 -- | Convert a 'DraftHydraNode' to a 'HydraNode' by providing mock implementations.
