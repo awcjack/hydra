@@ -155,7 +155,7 @@ withEtcdNetwork tracer protocolVersion config callback action = do
                         ("etcd-waitMessages", waitMessages tracer conn persistenceDir callback)
                         ( "etcd-callback-4"
                         , do
-                            queue <- newPersistentQueue (persistenceDir </> "pending-broadcast") 100
+                            queue <- newPersistentQueue (persistenceDir </> "pending-broadcast") 1000
                             raceLabelled_
                               ("etcd-broadcastMessages", broadcastMessages tracer config advertise queue)
                               ( "etcd-network-component-action"
@@ -355,7 +355,7 @@ putMessage ::
 putMessage tracer config ourHost msg = do
   -- XXX: Here we open a new connection _for every message_! This is
   -- effectively a work-around for https://github.com/cardano-scaling/hydra/issues/2167.
-  withConnection (connParams tracer (Just . Timeout Second $ TimeoutValue 3)) (grpcServer config) $ \conn -> do
+  withConnection (connParams tracer (Just . Timeout Second $ TimeoutValue 10)) (grpcServer config) $ \conn -> do
     void $ nonStreaming conn (rpc @(Protobuf KV "put")) req
  where
   req =
