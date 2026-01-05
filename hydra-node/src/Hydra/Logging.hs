@@ -17,7 +17,6 @@ module Hydra.Logging (
   Envelope (..),
   withTracer,
   withTracerOutputTo,
-  withCriticalTracer,
   showLogsOnFailure,
   traceInTVar,
   contramap,
@@ -96,15 +95,6 @@ withTracer ::
   IO a
 withTracer Quiet = ($ nullTracer)
 withTracer (Verbose namespace) = withTracerOutputTo stdout namespace
-
--- | Create a critical tracer that always logs to stderr, regardless of verbosity.
--- This is used for critical network/snapshot issues that must be visible even in quiet mode.
-withCriticalTracer ::
-  forall m msg a.
-  (MonadIO m, MonadFork m, MonadTime m, ToJSON msg) =>
-  (Tracer m msg -> IO a) ->
-  IO a
-withCriticalTracer = withTracerOutputTo stderr "critical"
 
 -- | Start logging thread acquiring a 'Tracer', outputting JSON formatted
 -- messages to some 'Handle'. This tracer is wrapping 'msg' into an 'Envelope'

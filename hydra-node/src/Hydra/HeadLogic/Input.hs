@@ -21,8 +21,7 @@ type TTL = Natural
 -- high priority to prevent them from being delayed by transaction messages
 -- under high load.
 data MessagePriority = HighPriority | LowPriority
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (ToJSON, FromJSON)
+  deriving stock (Eq, Show)
 
 -- | Classify an input by its priority. Protocol messages that are critical
 -- for snapshot progress get high priority, while transaction submissions

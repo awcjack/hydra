@@ -49,7 +49,7 @@ import Hydra.HeadLogic.State (getHeadParameters)
 import Hydra.HeadLogic.StateEvent (StateEvent (..))
 import Hydra.Ledger (Ledger)
 import Hydra.Logging (Tracer, traceWith)
-import Hydra.Network (Host (..), Network (..), NetworkCallback (..))
+import Hydra.Network (Connectivity, Host (..), Network (..), NetworkCallback (..))
 import Hydra.Network.Authenticate (Authenticated (..))
 import Hydra.Network.Message (Message (..), NetworkEvent (..))
 import Hydra.Node.Environment (Environment (..))
@@ -246,7 +246,8 @@ wireNetworkInput node =
         let input = mkNetworkInput sender msg
          in enqueue (inputPriority input) input
     , onConnectivity =
-        let input = NetworkInput 1 . ConnectivityEvent
+        let input :: Connectivity -> Input tx
+            input = NetworkInput 1 . ConnectivityEvent
          in enqueue HighPriority . input
     }
  where
