@@ -60,6 +60,7 @@ import Data.Aeson.Lens qualified as Aeson
 import Data.Aeson.Types (Value)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
+import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Data.List ((\\))
 import Data.List qualified as List
 import Data.Map qualified as Map
@@ -90,8 +91,6 @@ import Network.GRPC.Client (
  )
 import Network.GRPC.Client.StreamType.IO (biDiStreaming, nonStreaming)
 import Network.GRPC.Common (GrpcError (..), GrpcException (..), HTTP2Settings (..), NextElem (..), def, defaultHTTP2Settings)
-import System.IO (hPutStrLn)
-import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Network.GRPC.Common.Protobuf (Proto (..), Protobuf, defMessage, (.~))
 import Network.GRPC.Etcd (
   Compare'CompareResult (..),
@@ -104,6 +103,7 @@ import Network.Socket (PortNumber)
 import System.Directory (createDirectoryIfMissing, listDirectory, removeFile)
 import System.Environment.Blank (getEnvironment)
 import System.FilePath ((</>))
+import System.IO (hPutStrLn)
 import System.IO.Error (isDoesNotExistError)
 import System.Process (interruptProcessGroupOf)
 import System.Process.Typed (
@@ -177,7 +177,7 @@ withEtcdNetwork tracer protocolVersion config callback action = do
  where
   clientHost = Host{hostname = "127.0.0.1", port = getClientPort config}
 
-  -- | Write to queue with capacity monitoring. Logs critical warning when queue is near capacity.
+  -- \| Write to queue with capacity monitoring. Logs critical warning when queue is near capacity.
   monitoredBroadcast :: ToCBOR a => PersistentQueue IO a -> Natural -> a -> IO ()
   monitoredBroadcast pq@PersistentQueue{queue = tbQueue} maxSize msg = do
     -- Check current queue size before writing
@@ -353,11 +353,12 @@ broadcastMessages tracer config ourHost queue =
     failureCountRef <- newTVarIO (0 :: Int)
     forever $ do
       msg <- peekPersistentQueue queue
-      (do
-        putMessage tracer config ourHost msg
-        popPersistentQueue queue msg
-        -- Reset failure count on success
-        atomically $ writeTVar failureCountRef 0)
+      ( do
+          putMessage tracer config ourHost msg
+          popPersistentQueue queue msg
+          -- Reset failure count on success
+          atomically $ writeTVar failureCountRef 0
+        )
         `catch` \case
           GrpcException{grpcError, grpcErrorMessage}
             | grpcError == GrpcUnavailable || grpcError == GrpcDeadlineExceeded -> do
@@ -690,11 +691,12 @@ data EtcdLog
 logCritical :: ToJSON a => a -> IO ()
 logCritical msg = do
   now <- getCurrentTime
-  let envelope = object
-        [ "timestamp" Aeson..= now
-        , "level" Aeson..= ("CRITICAL" :: Text)
-        , "message" Aeson..= msg
-        ]
+  let envelope =
+        object
+          [ "timestamp" Aeson..= now
+          , "level" Aeson..= ("CRITICAL" :: Text)
+          , "message" Aeson..= msg
+          ]
   hPutStrLn stderr $ LBS8.unpack $ Aeson.encode envelope
   hFlush stderr
  where

@@ -26,7 +26,6 @@ module Hydra.Logging (
 import Hydra.Prelude
 
 import Cardano.BM.Tracing (ToObject (..), TracingVerbosity (..))
-import System.IO (stderr)
 import Control.Concurrent.Class.MonadSTM (
   flushTBQueue,
   modifyTVar,
