@@ -207,7 +207,7 @@ cacheSize (DatumCache cache) = Map.size cache
 -- This includes both inline datums (by computing their hash) and datum hash references.
 extractDatumHashes :: UTxO -> Set (Hash ScriptData)
 extractDatumHashes utxo =
-  Set.fromList $ mapMaybe extractHash $ map snd $ UTxO.toList utxo
+  Set.fromList $ mapMaybe (extractHash . snd) (UTxO.toList utxo)
  where
   extractHash :: TxOut Api.CtxUTxO -> Maybe (Hash ScriptData)
   extractHash (Api.TxOut _ _ datum _) =
