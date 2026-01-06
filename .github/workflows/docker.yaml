@@ -11,10 +11,10 @@ concurrency:
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "master", "v1.2.0-base" ]
     tags: [ "*.*.*" ]
   pull_request:
-    branches: [ "master" ]
+    branches: [ "master", "v1.2.0-base" ]
   workflow_dispatch:
     inputs:
       ref_name:
