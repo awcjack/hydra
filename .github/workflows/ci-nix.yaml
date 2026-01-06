@@ -11,7 +11,11 @@ on:
     branches:
     - master
     - release
+    - v1.2.0-base
   pull_request:
+    branches:
+    - master
+    - v1.2.0-base
   schedule:
     # Everyday at 4:00 AM
     - cron: "0 4 * * *"
