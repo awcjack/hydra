@@ -29,6 +29,7 @@ import Hydra.Node (
   DraftHydraNode,
   HydraNode (..),
   HydraNodeLog (..),
+  NodeStateHandler (..),
   checkHeadState,
   connect,
   hydrate,
