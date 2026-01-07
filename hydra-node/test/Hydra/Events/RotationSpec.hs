@@ -43,8 +43,10 @@ spec = parallel $ do
         failAfter 1 $ do
           eventStore <- createMockEventStore
           -- NOTE: because there will be 6 inputs processed in total (5 inputs + 1 tick),
-          -- this is hardcoded to ensure we get a checkpoint + a single event at the end
-          let rotationConfig = RotateAfter (Positive 5)
+          -- this is hardcoded to ensure we get a checkpoint + a single event at the end.
+          -- With RotateAfter 4: after 5 events (5 > 4 = TRUE) rotation happens,
+          -- then 6th event is stored separately, giving us 2 events total.
+          let rotationConfig = RotateAfter (Positive 4)
           let s0 = initNodeState SimpleChainState{slot = ChainSlot 0}
           rotatingEventStore <- newRotatedEventStore rotationConfig s0 mkAggregator mkCheckpoint eventStore
           testHydrate rotatingEventStore []
