@@ -4,7 +4,7 @@ module Hydra.Node.Environment where
 
 import Hydra.Prelude
 
-import Data.Aeson (object, withObject, (.!=), (.=), (.:), (.:?))
+import Data.Aeson (object, withObject, (.!=), (.:), (.:?), (.=))
 import Data.Time (NominalDiffTime)
 import Hydra.Node.DepositPeriod (DepositPeriod)
 import Hydra.Tx.ContestationPeriod (ContestationPeriod)
@@ -80,7 +80,7 @@ instance Arbitrary Environment where
     let snapshotBatchSize = fromIntegral snapshotBatchSizeInt
     -- Generate snapshot interval values that roundtrip cleanly through Double
     -- Use multiples of 0.0625 (1/16 second) which are exactly representable
-    snapshotIntervalUnits <- choose (1, 160) :: Gen Int  -- 0.0625s to 10s
+    snapshotIntervalUnits <- choose (1, 160) :: Gen Int -- 0.0625s to 10s
     let snapshotInterval = realToFrac (fromIntegral snapshotIntervalUnits * 0.0625 :: Double)
     pure Environment{..}
   shrink = genericShrink

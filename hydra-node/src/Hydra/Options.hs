@@ -44,6 +44,8 @@ import Hydra.Node.ApiTransactionTimeout (ApiTransactionTimeout (..))
 import Hydra.Node.DepositPeriod (DepositPeriod (..))
 import Hydra.Tx.ContestationPeriod (ContestationPeriod, fromNominalDiffTime)
 import Hydra.Tx.HeadId (HeadSeed)
+import Numeric (showFFloat)
+import Numeric.Natural (Natural)
 import Options.Applicative (
   Parser,
   ParserInfo,
@@ -81,8 +83,6 @@ import Options.Applicative (
  )
 import Options.Applicative.Builder (str)
 import Options.Applicative.Help (vsep)
-import Numeric (showFFloat)
-import Numeric.Natural (Natural)
 import Test.QuickCheck (Positive (..), choose, elements, listOf, listOf1, oneof, vectorOf)
 
 data Command
@@ -265,7 +265,7 @@ instance Arbitrary RunOptions where
     let snapshotBatchSize = fromIntegral snapshotBatchSizeInt
     -- Generate snapshot interval values that roundtrip cleanly through Double
     -- Use multiples of 0.0625 (1/16 second) which are exactly representable
-    snapshotIntervalUnits <- choose (1, 160) :: Gen Int  -- 0.0625s to 10s
+    snapshotIntervalUnits <- choose (1, 160) :: Gen Int -- 0.0625s to 10s
     let snapshotInterval = realToFrac (fromIntegral snapshotIntervalUnits * 0.0625 :: Double)
     pure $
       RunOptions
@@ -1117,7 +1117,7 @@ toArgs
    where
     (NodeId nId) = nodeId
 
-    -- | Show snapshot interval with full precision for correct roundtrip parsing
+    -- \| Show snapshot interval with full precision for correct roundtrip parsing
     showSnapshotInterval :: NominalDiffTime -> String
     showSnapshotInterval t =
       showFFloat Nothing (realToFrac t :: Double) ""

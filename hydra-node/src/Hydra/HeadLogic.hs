@@ -987,28 +987,28 @@ onOpenChainTick env chainTime pendingDeposits st =
            -- biased). This is also weird because we want to actually apply the state
            -- change and also to determine the next active.
            withNextActive (newActive <> newExpired <> pendingDeposits) $ \depositTxId ->
-             -- REVIEW: this is not really a wait, but discard?
-             -- TODO: Spec: wait tx𝜔 = ⊥ ∧ 𝑈𝛼 = ∅
-             if isNothing decommitTx
-               && isNothing currentDepositTxId
-               && not snapshotInFlight
-               && isLeader parameters party nextSn
-               then
-                 -- XXX: This state update has no equivalence in the
-                 -- spec. Do we really need to store that we have
-                 -- requested a snapshot? If yes, should update spec.
-                 newState SnapshotRequestDecided{snapshotNumber = nextSn, requestedAt = Just chainTime}
-                   -- Spec: multicast (reqSn,̂ 𝑣,̄ 𝒮.𝑠 + 1,̂ 𝒯, 𝑈𝛼, ⊥)
-                   <> cause (NetworkEffect $ ReqSn version nextSn (txId <$> localTxs) Nothing (Just depositTxId))
-               else
-                 noop
+            -- REVIEW: this is not really a wait, but discard?
+            -- TODO: Spec: wait tx𝜔 = ⊥ ∧ 𝑈𝛼 = ∅
+            if isNothing decommitTx
+              && isNothing currentDepositTxId
+              && not snapshotInFlight
+              && isLeader parameters party nextSn
+              then
+                -- XXX: This state update has no equivalence in the
+                -- spec. Do we really need to store that we have
+                -- requested a snapshot? If yes, should update spec.
+                newState SnapshotRequestDecided{snapshotNumber = nextSn, requestedAt = Just chainTime}
+                  -- Spec: multicast (reqSn,̂ 𝑣,̄ 𝒮.𝑠 + 1,̂ 𝒯, 𝑈𝛼, ⊥)
+                  <> cause (NetworkEffect $ ReqSn version nextSn (txId <$> localTxs) Nothing (Just depositTxId))
+              else
+                noop
  where
   -- Time-based snapshot triggering: request snapshot if enough time has passed
   -- since the last snapshot AND there are pending transactions.
   maybeTimeBasedSnapshot =
     let hasPendingTxs = not (null localTxs)
         intervalPassed = case lastSnapshotTime of
-          Nothing -> True  -- No previous snapshot, allow triggering
+          Nothing -> True -- No previous snapshot, allow triggering
           Just lastTime -> diffUTCTime chainTime lastTime >= snapshotInterval
      in if hasPendingTxs
           && intervalPassed
