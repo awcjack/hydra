@@ -19,6 +19,7 @@ import Data.ByteString.Char8 qualified as BSC
 import Data.IP (IP (IPv4), toIPv4, toIPv4w)
 import Data.Text (unpack)
 import Data.Text qualified as T
+import Data.Time (NominalDiffTime)
 import Data.Version (showVersion)
 import Hydra.Cardano.Api (
   ChainPoint (..),
@@ -47,6 +48,7 @@ import Options.Applicative (
   Parser,
   ParserInfo,
   ParserResult (..),
+  ReadM,
   auto,
   command,
   completer,
@@ -79,6 +81,8 @@ import Options.Applicative (
  )
 import Options.Applicative.Builder (str)
 import Options.Applicative.Help (vsep)
+import Numeric (showFFloat)
+import Numeric.Natural (Natural)
 import Test.QuickCheck (Positive (..), choose, elements, listOf, listOf1, oneof, vectorOf)
 
 data Command
@@ -215,6 +219,12 @@ data RunOptions = RunOptions
   , ledgerConfig :: LedgerConfig
   , whichEtcd :: WhichEtcd
   , apiTransactionTimeout :: ApiTransactionTimeout
+  , snapshotBatchSize :: Natural
+  -- ^ Number of transactions to accumulate before requesting a snapshot.
+  -- Default is 10. Set to 1 for legacy behavior (snapshot per transaction).
+  , snapshotInterval :: NominalDiffTime
+  -- ^ Maximum time interval between snapshots when there are pending transactions.
+  -- Default is 100ms. Snapshots are requested if this interval passes AND localTxs > 0.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToJSON, FromJSON)
@@ -251,6 +261,12 @@ instance Arbitrary RunOptions where
     ledgerConfig <- arbitrary
     whichEtcd <- arbitrary
     apiTransactionTimeout <- arbitrary
+    snapshotBatchSizeInt <- choose (1, 100) :: Gen Int
+    let snapshotBatchSize = fromIntegral snapshotBatchSizeInt
+    -- Generate snapshot interval values that roundtrip cleanly through Double
+    -- Use multiples of 0.0625 (1/16 second) which are exactly representable
+    snapshotIntervalUnits <- choose (1, 160) :: Gen Int  -- 0.0625s to 10s
+    let snapshotInterval = realToFrac (fromIntegral snapshotIntervalUnits * 0.0625 :: Double)
     pure $
       RunOptions
         { verbosity
@@ -271,6 +287,8 @@ instance Arbitrary RunOptions where
         , ledgerConfig
         , whichEtcd
         , apiTransactionTimeout
+        , snapshotBatchSize
+        , snapshotInterval
         }
 
   shrink = genericShrink
@@ -297,9 +315,19 @@ defaultRunOptions =
     , ledgerConfig = defaultLedgerConfig
     , whichEtcd = EmbeddedEtcd
     , apiTransactionTimeout = 300
+    , snapshotBatchSize = defaultSnapshotBatchSize
+    , snapshotInterval = defaultSnapshotInterval
     }
  where
   localhost = IPv4 $ toIPv4 [127, 0, 0, 1]
+
+-- | Default snapshot batch size (number of transactions before requesting snapshot).
+defaultSnapshotBatchSize :: Natural
+defaultSnapshotBatchSize = 10
+
+-- | Default snapshot interval (100ms).
+defaultSnapshotInterval :: NominalDiffTime
+defaultSnapshotInterval = 0.1
 
 -- | Parser for running the cardano-node with all its 'RunOptions'.
 runOptionsParser :: Parser RunOptions
@@ -323,6 +351,8 @@ runOptionsParser =
     <*> ledgerConfigParser
     <*> whichEtcdParser
     <*> apiTransactionTimeoutParser
+    <*> snapshotBatchSizeParser
+    <*> snapshotIntervalParser
 
 whichEtcdParser :: Parser WhichEtcd
 whichEtcdParser =
@@ -815,6 +845,36 @@ apiTransactionTimeoutParser =
           \takes longer than this, it will be cancelled."
     )
 
+snapshotBatchSizeParser :: Parser Natural
+snapshotBatchSizeParser =
+  option
+    auto
+    ( long "snapshot-batch-size"
+        <> metavar "NATURAL"
+        <> value defaultSnapshotBatchSize
+        <> showDefault
+        <> completer (listCompleter ["1", "5", "10", "20", "50"])
+        <> help
+          "Number of transactions to accumulate before requesting a snapshot. \
+          \Set to 1 for legacy behavior (snapshot per transaction). \
+          \Higher values reduce snapshot overhead but increase latency."
+    )
+
+snapshotIntervalParser :: Parser NominalDiffTime
+snapshotIntervalParser =
+  option
+    (realToFrac <$> (auto :: ReadM Double))
+    ( long "snapshot-interval"
+        <> metavar "SECONDS"
+        <> value defaultSnapshotInterval
+        <> showDefault
+        <> completer (listCompleter ["0.05", "0.1", "0.2", "0.5", "1.0"])
+        <> help
+          "Maximum time interval (in seconds) between snapshots when there are pending transactions. \
+          \Snapshots are requested if this interval passes AND there is at least one pending transaction. \
+          \Combined with --snapshot-batch-size, this provides hybrid throttling."
+    )
+
 startChainFromParser :: Parser ChainPoint
 startChainFromParser =
   option
@@ -1031,6 +1091,8 @@ toArgs
     , ledgerConfig
     , whichEtcd
     , apiTransactionTimeout
+    , snapshotBatchSize
+    , snapshotInterval
     } =
     isVerbose verbosity
       <> ["--node-id", unpack nId]
@@ -1050,8 +1112,15 @@ toArgs
       <> argsChainConfig chainConfig
       <> argsLedgerConfig
       <> ["--api-transaction-timeout", show apiTransactionTimeout]
+      <> ["--snapshot-batch-size", show snapshotBatchSize]
+      <> ["--snapshot-interval", showSnapshotInterval snapshotInterval]
    where
     (NodeId nId) = nodeId
+
+    -- | Show snapshot interval with full precision for correct roundtrip parsing
+    showSnapshotInterval :: NominalDiffTime -> String
+    showSnapshotInterval t =
+      showFFloat Nothing (realToFrac t :: Double) ""
 
     toWhichEtcd = \case
       SystemEtcd -> ["--use-system-etcd"]

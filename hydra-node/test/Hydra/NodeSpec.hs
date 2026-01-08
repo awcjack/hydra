@@ -301,6 +301,8 @@ spec = parallel $ do
             , depositPeriod = defaultDepositPeriod
             , participants = error "should not be recorded in head state"
             , configuredPeers = ""
+            , snapshotBatchSize = 1
+            , snapshotInterval = 0.1
             }
         nodeState = inInitialState [alice, bob]
 
@@ -474,6 +476,8 @@ testHydraNode tracer signingKey otherParties contestationPeriod inputs = do
       , depositPeriod = defaultDepositPeriod
       , participants
       , configuredPeers = ""
+      , snapshotBatchSize = 1
+      , snapshotInterval = 0.1
       }
 
   party = deriveParty signingKey

@@ -1,6 +1,7 @@
 {
     "samples": [
         {
+            "requestedAt": null,
             "snapshotNumber": 1,
             "tag": "SnapshotRequestDecided"
         }

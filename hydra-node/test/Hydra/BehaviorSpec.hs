@@ -1362,6 +1362,8 @@ createHydraNode tracer ledger chainState signingKey otherParties outputs message
       , participants
       , depositPeriod = dp
       , configuredPeers = ""
+      , snapshotBatchSize = 1
+      , snapshotInterval = 0.1
       }
   party = deriveParty signingKey
 

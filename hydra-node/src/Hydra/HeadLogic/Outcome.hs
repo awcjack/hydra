@@ -86,7 +86,12 @@ data StateChanged tx
       , tx :: tx
       , newLocalUTxO :: UTxOType tx
       }
-  | SnapshotRequestDecided {snapshotNumber :: SnapshotNumber}
+  | SnapshotRequestDecided
+      { snapshotNumber :: SnapshotNumber
+      , requestedAt :: Maybe UTCTime
+      -- ^ Time when the snapshot was requested. Used for time-based throttling.
+      -- 'Nothing' if the time was not available at request time (e.g., non-tick events).
+      }
   | -- | A snapshot was requested by some party.
     -- NOTE: We deliberately already include an updated local ledger state to
     -- not need a ledger to interpret this event.
@@ -167,7 +172,7 @@ genStateChanged env =
     , HeadOpened <$> arbitrary <*> arbitrary <*> arbitrary
     , TransactionReceived <$> arbitrary
     , TransactionAppliedToLocalUTxO <$> arbitrary <*> arbitrary <*> arbitrary
-    , SnapshotRequestDecided <$> arbitrary
+    , SnapshotRequestDecided <$> arbitrary <*> arbitrary
     , SnapshotRequested <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
     , PartySignedSnapshot <$> arbitrary <*> arbitrary <*> arbitrary
     , SnapshotConfirmed <$> arbitrary <*> arbitrary <*> arbitrary

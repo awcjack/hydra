@@ -78,6 +78,8 @@ initEnvironment options = do
       , contestationPeriod
       , depositPeriod
       , configuredPeers
+      , snapshotBatchSize
+      , snapshotInterval
       }
  where
   -- XXX: This is mostly a cardano-specific initialization step of loading
@@ -118,6 +120,8 @@ initEnvironment options = do
     , chainConfig
     , advertise
     , peers
+    , snapshotBatchSize
+    , snapshotInterval
     } = options
 
 -- | Checks that command line options match a given 'HeadState'. This function
