@@ -71,6 +71,8 @@ spec =
             , depositPeriod = defaultDepositPeriod
             , participants = deriveOnChainId <$> threeParties
             , configuredPeers = ""
+            , snapshotBatchSize = 1
+            , snapshotInterval = 0.1
             }
         aliceEnv =
           Environment
@@ -81,6 +83,8 @@ spec =
             , depositPeriod = defaultDepositPeriod
             , participants = deriveOnChainId <$> threeParties
             , configuredPeers = ""
+            , snapshotBatchSize = 1
+            , snapshotInterval = 0.1
             }
 
     describe "Coordinated Head Protocol" $ do
@@ -96,6 +100,7 @@ spec =
               , currentDepositTxId = Nothing
               , decommitTx = Nothing
               , version = 0
+              , lastSnapshotTime = Nothing
               }
 
       it "reports if a requested tx is expired" $ do
@@ -962,6 +967,7 @@ spec =
                               , currentDepositTxId = Nothing
                               , decommitTx = Nothing
                               , version = 0
+                              , lastSnapshotTime = Nothing
                               }
                         , chainState = ChainStateAt{spendableUTxO = mempty, recordedAt = Just $ ChainPoint 0 blockHash}
                         , headId = testHeadId
@@ -1058,6 +1064,7 @@ spec =
                               , currentDepositTxId = Nothing
                               , decommitTx = Nothing
                               , version = 0
+                              , lastSnapshotTime = Nothing
                               }
                         , chainState = Prelude.error "should not be used"
                         , headId = testHeadId
@@ -1099,6 +1106,7 @@ spec =
                             , currentDepositTxId = Nothing
                             , decommitTx = Nothing
                             , version = 0
+                            , lastSnapshotTime = Nothing
                             }
                       , chainState = Prelude.error "should not be used"
                       , headId = testHeadId
@@ -1269,6 +1277,7 @@ inOpenState parties =
       , currentDepositTxId = Nothing
       , decommitTx = Nothing
       , version = 0
+      , lastSnapshotTime = Nothing
       }
  where
   u0 = mempty

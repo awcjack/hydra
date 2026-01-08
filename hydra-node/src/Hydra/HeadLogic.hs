@@ -335,17 +335,21 @@ onOpenNetworkReqTx env ledger currentSlot st ttl tx =
             newState TxInvalid{headId, utxo = localUTxO, transaction = tx, validationError = err}
 
   maybeRequestSnapshot nextSn outcome =
-    if not snapshotInFlight && isLeader parameters party nextSn
-      then
-        outcome
-          -- XXX: This state update has no equivalence in the
-          -- spec. Do we really need to store that we have
-          -- requested a snapshot? If yes, should update spec.
-          <> newState SnapshotRequestDecided{snapshotNumber = nextSn}
-          <> cause (NetworkEffect $ ReqSn version nextSn (txId <$> localTxs') decommitTx currentDepositTxId)
-      else outcome
+    -- Batch-size based throttling: only request snapshot if we have accumulated
+    -- enough transactions (>= snapshotBatchSize). The time-based trigger is
+    -- handled separately in onOpenChainTick.
+    let batchReady = fromIntegral (length localTxs') >= snapshotBatchSize
+     in if not snapshotInFlight && isLeader parameters party nextSn && batchReady
+          then
+            outcome
+              -- XXX: This state update has no equivalence in the
+              -- spec. Do we really need to store that we have
+              -- requested a snapshot? If yes, should update spec.
+              <> newState SnapshotRequestDecided{snapshotNumber = nextSn, requestedAt = Nothing}
+              <> cause (NetworkEffect $ ReqSn version nextSn (txId <$> localTxs') decommitTx currentDepositTxId)
+          else outcome
 
-  Environment{party} = env
+  Environment{party, snapshotBatchSize} = env
 
   Ledger{applyTransactions} = ledger
 
@@ -693,7 +697,7 @@ onOpenNetworkAckSn Environment{party} pendingDeposits openState otherParty snaps
     if isLeader parameters party nextSn && not (null localTxs)
       then
         outcome
-          <> newState SnapshotRequestDecided{snapshotNumber = nextSn}
+          <> newState SnapshotRequestDecided{snapshotNumber = nextSn, requestedAt = Nothing}
           <> cause (NetworkEffect $ ReqSn version nextSn (txId <$> localTxs) decommitTx currentDepositTxId)
       else outcome
 
@@ -968,34 +972,56 @@ onChainTick env pendingDeposits chainTime =
 -- __Transition__: 'OpenState' → 'OpenState'
 --
 -- This is primarily used to track deposits and either drop them or request
--- snapshots for inclusion.
+-- snapshots for inclusion. It also handles time-based snapshot throttling.
 onOpenChainTick :: IsTx tx => Environment -> UTCTime -> PendingDeposits tx -> OpenState tx -> Outcome tx
 onOpenChainTick env chainTime pendingDeposits st =
-  -- Determine new active and new expired
-  let nextDeposits = determineNextDepositStatus env pendingDeposits chainTime
-      newActive = Map.filter (\Deposit{status} -> status == Active) nextDeposits
-      newExpired = Map.filter (\Deposit{status} -> status == Expired) nextDeposits
-   in -- Apply state changes and pick next active to request snapshot
-      -- XXX: This is smelly as we rely on Map <> to override entries (left
-      -- biased). This is also weird because we want to actually apply the state
-      -- change and also to determine the next active.
-      withNextActive (newActive <> newExpired <> pendingDeposits) $ \depositTxId ->
-        -- REVIEW: this is not really a wait, but discard?
-        -- TODO: Spec: wait tx𝜔 = ⊥ ∧ 𝑈𝛼 = ∅
-        if isNothing decommitTx
-          && isNothing currentDepositTxId
+  -- Time-based snapshot throttling: trigger snapshot if interval has passed
+  -- and there are pending transactions
+  maybeTimeBasedSnapshot
+    -- Determine new active and new expired
+    <> let nextDeposits = determineNextDepositStatus env pendingDeposits chainTime
+           newActive = Map.filter (\Deposit{status} -> status == Active) nextDeposits
+           newExpired = Map.filter (\Deposit{status} -> status == Expired) nextDeposits
+        in -- Apply state changes and pick next active to request snapshot
+           -- XXX: This is smelly as we rely on Map <> to override entries (left
+           -- biased). This is also weird because we want to actually apply the state
+           -- change and also to determine the next active.
+           withNextActive (newActive <> newExpired <> pendingDeposits) $ \depositTxId ->
+            -- REVIEW: this is not really a wait, but discard?
+            -- TODO: Spec: wait tx𝜔 = ⊥ ∧ 𝑈𝛼 = ∅
+            if isNothing decommitTx
+              && isNothing currentDepositTxId
+              && not snapshotInFlight
+              && isLeader parameters party nextSn
+              then
+                -- XXX: This state update has no equivalence in the
+                -- spec. Do we really need to store that we have
+                -- requested a snapshot? If yes, should update spec.
+                newState SnapshotRequestDecided{snapshotNumber = nextSn, requestedAt = Just chainTime}
+                  -- Spec: multicast (reqSn,̂ 𝑣,̄ 𝒮.𝑠 + 1,̂ 𝒯, 𝑈𝛼, ⊥)
+                  <> cause (NetworkEffect $ ReqSn version nextSn (txId <$> localTxs) Nothing (Just depositTxId))
+              else
+                noop
+ where
+  -- Time-based snapshot triggering: request snapshot if enough time has passed
+  -- since the last snapshot AND there are pending transactions.
+  maybeTimeBasedSnapshot =
+    let hasPendingTxs = not (null localTxs)
+        intervalPassed = case lastSnapshotTime of
+          Nothing -> True -- No previous snapshot, allow triggering
+          Just lastTime -> diffUTCTime chainTime lastTime >= snapshotInterval
+     in if hasPendingTxs
+          && intervalPassed
           && not snapshotInFlight
           && isLeader parameters party nextSn
+          && isNothing decommitTx
+          && isNothing currentDepositTxId
           then
-            -- XXX: This state update has no equivalence in the
-            -- spec. Do we really need to store that we have
-            -- requested a snapshot? If yes, should update spec.
-            newState SnapshotRequestDecided{snapshotNumber = nextSn}
-              -- Spec: multicast (reqSn,̂ 𝑣,̄ 𝒮.𝑠 + 1,̂ 𝒯, 𝑈𝛼, ⊥)
-              <> cause (NetworkEffect $ ReqSn version nextSn (txId <$> localTxs) Nothing (Just depositTxId))
+            newState SnapshotRequestDecided{snapshotNumber = nextSn, requestedAt = Just chainTime}
+              <> cause (NetworkEffect $ ReqSn version nextSn (txId <$> localTxs) decommitTx currentDepositTxId)
           else
             noop
- where
+
   -- Pending active deposits are selected in arrival order (FIFO).
   withNextActive :: forall tx. (Eq (UTxOType tx), Monoid (UTxOType tx)) => Map (TxIdType tx) (Deposit tx) -> (TxIdType tx -> Outcome tx) -> Outcome tx
   withNextActive deposits cont = do
@@ -1008,7 +1034,7 @@ onOpenChainTick env chainTime pendingDeposits st =
 
   nextSn = confirmedSn + 1
 
-  Environment{party} = env
+  Environment{party, snapshotInterval} = env
 
   CoordinatedHeadState
     { localTxs
@@ -1017,6 +1043,7 @@ onOpenChainTick env chainTime pendingDeposits st =
     , version
     , decommitTx
     , currentDepositTxId
+    , lastSnapshotTime
     } = coordinatedHeadState
 
   Snapshot{number = confirmedSn} = getSnapshot confirmedSnapshot
@@ -1558,6 +1585,7 @@ aggregate st = \case
                   , currentDepositTxId = Nothing
                   , decommitTx = Nothing
                   , version = 0
+                  , lastSnapshotTime = Nothing
                   }
             , chainState
             , headId
@@ -1593,7 +1621,7 @@ aggregate st = \case
        where
         CoordinatedHeadState{localTxs} = coordinatedHeadState
       _otherState -> st
-  SnapshotRequestDecided{snapshotNumber} ->
+  SnapshotRequestDecided{snapshotNumber, requestedAt} ->
     case st of
       Open os@OpenState{coordinatedHeadState} ->
         Open
@@ -1605,10 +1633,12 @@ aggregate st = \case
                         { lastSeen = seenSnapshotNumber seenSnapshot
                         , requested = snapshotNumber
                         }
+                  , -- Update lastSnapshotTime if requestedAt is provided (from time-based triggers)
+                    lastSnapshotTime = requestedAt <|> lastSnapshotTime
                   }
             }
        where
-        CoordinatedHeadState{seenSnapshot} = coordinatedHeadState
+        CoordinatedHeadState{seenSnapshot, lastSnapshotTime} = coordinatedHeadState
       _otherState -> st
   SnapshotRequested{snapshot, requestedTxIds, newLocalUTxO, newLocalTxs, newCurrentDepositTxId} ->
     case st of

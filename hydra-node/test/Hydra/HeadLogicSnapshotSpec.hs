@@ -49,6 +49,8 @@ spec = do
                 , depositPeriod = defaultDepositPeriod
                 , participants = deriveOnChainId <$> threeParties
                 , configuredPeers = ""
+                , snapshotBatchSize = 1
+                , snapshotInterval = 0.1
                 }
 
     let coordinatedHeadState =
@@ -61,6 +63,7 @@ spec = do
             , currentDepositTxId = Nothing
             , decommitTx = Nothing
             , version = 0
+            , lastSnapshotTime = Nothing
             }
     let sendReqSn :: Effect tx -> Bool
         sendReqSn = \case
@@ -196,6 +199,8 @@ prop_singleMemberHeadAlwaysSnapshotOnReqTx sn = monadicST $ do
             , depositPeriod = defaultDepositPeriod
             , participants = [deriveOnChainId party]
             , configuredPeers = ""
+            , snapshotBatchSize = 1
+            , snapshotInterval = 0.1
             }
     st =
       CoordinatedHeadState
@@ -207,6 +212,7 @@ prop_singleMemberHeadAlwaysSnapshotOnReqTx sn = monadicST $ do
         , currentDepositTxId = Nothing
         , decommitTx = Nothing
         , version
+        , lastSnapshotTime = Nothing
         }
     outcome = update aliceEnv simpleLedger (inOpenState' [alice] st) $ receiveMessage $ ReqTx tx
     Snapshot{number = confirmedSn} = getSnapshot sn

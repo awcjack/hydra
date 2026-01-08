@@ -51,4 +51,6 @@ testEnvironment =
     , depositPeriod = DepositPeriod 20
     , participants = deriveOnChainId <$> [alice, bob, carol]
     , configuredPeers = ""
+    , snapshotBatchSize = 1 -- Legacy behavior: snapshot per transaction
+    , snapshotInterval = 0.1 -- 100ms default interval
     }

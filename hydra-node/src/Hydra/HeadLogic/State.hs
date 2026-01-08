@@ -172,7 +172,7 @@ data CoordinatedHeadState tx = CoordinatedHeadState
   , confirmedSnapshot :: ConfirmedSnapshot tx
   -- ^ The latest confirmed snapshot. Spec: S̅
   , seenSnapshot :: SeenSnapshot tx
-  -- ^ Last seen snapshot and signatures accumulator. Spec: Û, ŝ and Σ̂
+  -- ^ Last seen snapshot and signatures accumulator. Spec: Û, ŝ and Σ̂
   , currentDepositTxId :: Maybe (TxIdType tx)
   -- ^ Current/next deposit to incrementally commit. Spec: Uα
   -- TODO: update in spec: Uα -> tx^#α
@@ -180,6 +180,10 @@ data CoordinatedHeadState tx = CoordinatedHeadState
   -- ^ Pending decommit transaction. Spec: txω
   , version :: SnapshotVersion
   -- ^ Last open state version as observed on chain. Spec: ̂v
+  , lastSnapshotTime :: Maybe UTCTime
+  -- ^ Time when the last snapshot was requested. Used for time-based throttling
+  -- to ensure snapshots are requested at least every snapshotInterval when there
+  -- are pending transactions.
   }
   deriving stock (Generic)
 

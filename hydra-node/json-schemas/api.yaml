@@ -3001,6 +3001,8 @@ components:
       - contestationPeriod
       - depositPeriod
       - configuredPeers
+      - snapshotBatchSize
+      - snapshotInterval
       additionalProperties: false
       properties:
         party:
@@ -3021,6 +3023,14 @@ components:
           $ref: "api.yaml#/components/schemas/DepositPeriod"
         configuredPeers:
           type: string
+        snapshotBatchSize:
+          type: integer
+          minimum: 1
+          description: Number of transactions to accumulate before requesting a snapshot
+        snapshotInterval:
+          type: number
+          format: double
+          description: Maximum time interval (in seconds) between snapshots
 
     NetworkInfo:
       type: object
@@ -3405,6 +3415,7 @@ components:
         - currentDepositTxId
         - decommitTx
         - version
+        - lastSnapshotTime
       properties:
         localUTxO:
           $ref: "api.yaml#/components/schemas/UTxO"
@@ -3432,6 +3443,12 @@ components:
             - $ref: "api.yaml#/components/schemas/Transaction"
         version:
           $ref: "api.yaml#/components/schemas/SnapshotVersion"
+        lastSnapshotTime:
+          oneOf:
+            - type: "null"
+            - type: string
+              format: date-time
+              description: The UTC time when the last snapshot was requested
 
     Deposit:
       type: object

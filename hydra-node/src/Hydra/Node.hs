@@ -43,6 +43,7 @@ import Hydra.HeadLogic (
   aggregateState,
  )
 import Hydra.HeadLogic qualified as HeadLogic
+import Hydra.HeadLogic.Input (MessagePriority (..), inputPriority)
 import Hydra.HeadLogic.Outcome (StateChanged (..))
 import Hydra.HeadLogic.State (getHeadParameters)
 import Hydra.HeadLogic.StateEvent (StateEvent (..))
@@ -77,6 +78,8 @@ initEnvironment options = do
       , contestationPeriod
       , depositPeriod
       , configuredPeers
+      , snapshotBatchSize
+      , snapshotInterval
       }
  where
   -- XXX: This is mostly a cardano-specific initialization step of loading
@@ -117,6 +120,8 @@ initEnvironment options = do
     , chainConfig
     , advertise
     , peers
+    , snapshotBatchSize
+    , snapshotInterval
     } = options
 
 -- | Checks that command line options match a given 'HeadState'. This function
@@ -226,12 +231,12 @@ hydrate tracer env ledger initialChainState EventStore{eventSource, eventSink} e
         )
 
 wireChainInput :: DraftHydraNode tx m -> (ChainEvent tx -> m ())
-wireChainInput node = enqueue . ChainInput
+wireChainInput node = enqueue HighPriority . ChainInput
  where
   DraftHydraNode{inputQueue = InputQueue{enqueue}} = node
 
 wireClientInput :: DraftHydraNode tx m -> (ClientInput tx -> m ())
-wireClientInput node = enqueue . ClientInput
+wireClientInput node = enqueue HighPriority . ClientInput
  where
   DraftHydraNode{inputQueue = InputQueue{enqueue}} = node
 
@@ -239,9 +244,11 @@ wireNetworkInput :: DraftHydraNode tx m -> NetworkCallback (Authenticated (Messa
 wireNetworkInput node =
   NetworkCallback
     { deliver = \Authenticated{party = sender, payload = msg} ->
-        enqueue $ mkNetworkInput sender msg
+        let input = mkNetworkInput sender msg
+         in enqueue (inputPriority input) input
     , onConnectivity =
-        enqueue . NetworkInput 1 . ConnectivityEvent
+        let input = NetworkInput 1 . ConnectivityEvent
+         in enqueue HighPriority . input
     }
  where
   DraftHydraNode{inputQueue = InputQueue{enqueue}} = node
@@ -321,7 +328,9 @@ stepHydraNode node = do
   maybeReenqueue q@Queued{queuedId, queuedItem} =
     case queuedItem of
       NetworkInput ttl msg
-        | ttl > 0 -> reenqueue waitDelay q{queuedItem = NetworkInput (ttl - 1) msg}
+        | ttl > 0 ->
+            let newItem = NetworkInput (ttl - 1) msg
+             in reenqueue (inputPriority newItem) waitDelay q{queuedItem = newItem}
       _ -> traceWith tracer $ DroppedFromQueue{inputId = queuedId, input = queuedItem}
 
   Environment{party} = env
@@ -391,7 +400,7 @@ processEffects node tracer inputId effects = do
       OnChainEffect{postChainTx} ->
         postTx postChainTx
           `catch` \(postTxError :: PostTxError tx) ->
-            enqueue . ChainInput $ PostTxError{postChainTx, postTxError, failingTx = Nothing}
+            enqueue HighPriority . ChainInput $ PostTxError{postChainTx, postTxError, failingTx = Nothing}
     traceWith tracer $ EndEffect party inputId effectId
 
   HydraNode

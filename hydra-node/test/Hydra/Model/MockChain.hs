@@ -58,6 +58,7 @@ import Hydra.HeadLogic (
   Input (..),
   OpenState (..),
  )
+import Hydra.HeadLogic.Input (MessagePriority (..), inputPriority)
 import Hydra.Ledger (Ledger (..), ValidationError (..), collectTransactions)
 import Hydra.Ledger.Cardano (adjustUTxO, fromChainSlot)
 import Hydra.Ledger.Cardano.Evaluate (eraHistoryWithoutHorizon, evaluateTx, renderEvaluationReport)
@@ -189,7 +190,7 @@ mockChainAndNetwork tr seedKeys commits = do
             , chainHandler =
                 chainSyncHandler
                   tr
-                  (enqueue . ChainInput)
+                  (enqueue HighPriority . ChainInput)
                   getTimeHandle
                   ctx
                   localChainState
@@ -375,7 +376,8 @@ createMockNetwork draftNode nodes =
     mapM_ (`handleMessage` msg) allNodes
 
   handleMessage HydraNode{inputQueue} msg = do
-    enqueue inputQueue $ mkNetworkInput sender msg
+    let input = mkNetworkInput sender msg
+    enqueue inputQueue (inputPriority input) input
 
   sender = getParty draftNode
 
