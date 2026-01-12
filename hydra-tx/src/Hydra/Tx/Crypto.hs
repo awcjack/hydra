@@ -50,7 +50,7 @@ import Cardano.Crypto.Hash (Blake2b_256, SHA256, castHash, hashFromBytes, hashTo
 import Cardano.Crypto.Hash qualified as Crypto
 import Cardano.Crypto.Hash.Class (HashAlgorithm (digest))
 import Cardano.Crypto.Seed (getSeedBytes, mkSeedFromBytes)
-import Cardano.Crypto.Util (SignableRepresentation)
+import Cardano.Crypto.Util (SignableRepresentation (..))
 import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as BS
 import Data.ByteString.Base16 qualified as Base16
@@ -337,14 +337,45 @@ verifyMultiSignature ::
   MultiSignature a ->
   a ->
   Verified
-verifyMultiSignature vks HydraMultiSignature{multiSignature} a
+verifyMultiSignature vks multisig a =
+  -- OPTIMIZATION: Pre-compute the signable representation once instead of
+  -- once per party. With N parties, this reduces hashUTxO calls from 3N to 3.
+  verifyMultiSignatureWithBytes vks multisig (getSignableRepresentation a)
+
+-- | Verify a multi-signature using pre-computed signable bytes.
+--
+-- This is an optimization for cases where the signable representation is
+-- expensive to compute (e.g., snapshots with large UTxO sets). The caller
+-- computes the bytes once and reuses them for all verifications.
+verifyMultiSignatureWithBytes ::
+  [VerificationKey HydraKey] ->
+  MultiSignature a ->
+  ByteString ->
+  Verified
+verifyMultiSignatureWithBytes vks HydraMultiSignature{multiSignature} signableBytes
   | length vks == length multiSignature =
-      let verifications = zipWith (\vk s -> (vk, verify vk s a)) vks multiSignature
+      let verifications = zipWith (\vk s -> (vk, verifyWithBytes vk s signableBytes)) vks multiSignature
           failures = fst <$> filter (not . snd) verifications
        in if null failures
             then Verified
             else FailedKeys failures
   | otherwise = KeyNumberMismatch
+
+-- | Verify a signature using pre-computed signable bytes.
+--
+-- This is an optimization for cases where the signable representation is
+-- expensive to compute. The caller computes the bytes once and reuses them.
+verifyWithBytes ::
+  VerificationKey HydraKey ->
+  Signature a ->
+  ByteString ->
+  Bool
+verifyWithBytes (HydraVerificationKey vk) (HydraSignature sig) signableBytes =
+  case verifyDSIGN ctx vk signableBytes sig of
+    Right () -> True
+    Left _ -> False
+ where
+  ctx = () :: ContextDSIGN Ed25519DSIGN
 
 toPlutusSignatures :: MultiSignature a -> [OnChain.Signature]
 toPlutusSignatures (HydraMultiSignature sigs) =

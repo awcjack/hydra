@@ -17,6 +17,8 @@ import Control.Lens ((.~))
 import Data.List qualified as List
 import Data.Map (notMember)
 import Data.Map qualified as Map
+import Data.Sequence (Seq (Empty))
+import Data.Sequence qualified as Seq
 import Data.Set qualified as Set
 import Hydra.API.ClientInput (ClientInput (SideLoadSnapshot))
 import Hydra.API.ServerOutput (DecommitInvalidReason (..))
@@ -90,7 +92,7 @@ spec =
             CoordinatedHeadState
               { localUTxO = mempty
               , allTxs = mempty
-              , localTxs = mempty
+              , localTxs = Empty
               , confirmedSnapshot = InitialSnapshot testHeadId mempty
               , seenSnapshot = NoSeenSnapshot
               , currentDepositTxId = Nothing
@@ -155,7 +157,7 @@ spec =
 
           case headState s of
             Open OpenState{coordinatedHeadState = CoordinatedHeadState{localTxs}} -> do
-              localTxs `shouldBe` [tx2, tx3]
+              localTxs `shouldBe` Seq.fromList [tx2, tx3]
             _ -> fail "expected Open state"
 
       describe "Deposit" $ do
@@ -836,7 +838,7 @@ spec =
                 coordinatedHeadState
                   { localUTxO = utxoRef 4
                   , allTxs = Map.fromList [(txId tx2, tx2), (txId tx3, tx3)]
-                  , localTxs = [tx2, tx3]
+                  , localTxs = Seq.fromList [tx2, tx3]
                   , confirmedSnapshot = ConfirmedSnapshot snapshot1 multisig1
                   , seenSnapshot = RequestedSnapshot{lastSeen = 1, requested = 2}
                   }
@@ -956,7 +958,7 @@ spec =
                             CoordinatedHeadState
                               { localUTxO = mempty
                               , allTxs = mempty
-                              , localTxs = []
+                              , localTxs = Empty
                               , confirmedSnapshot = InitialSnapshot testHeadId mempty
                               , seenSnapshot = NoSeenSnapshot
                               , currentDepositTxId = Nothing
@@ -1052,7 +1054,7 @@ spec =
                             CoordinatedHeadState
                               { localUTxO = uncurry UTxO.singleton utxo
                               , allTxs = mempty
-                              , localTxs = [expiringTransaction]
+                              , localTxs = Seq.singleton expiringTransaction
                               , confirmedSnapshot = InitialSnapshot testHeadId $ uncurry UTxO.singleton utxo
                               , seenSnapshot = NoSeenSnapshot
                               , currentDepositTxId = Nothing
@@ -1078,7 +1080,7 @@ spec =
             OpenState
               { coordinatedHeadState =
                 CoordinatedHeadState{localTxs}
-              } -> null localTxs
+              } -> Seq.null localTxs
           _ -> False
 
     prop "empty inputs in decommit tx are prevented" $ \tx -> do
@@ -1093,7 +1095,7 @@ spec =
                           CoordinatedHeadState
                             { localUTxO = mempty
                             , allTxs = mempty
-                            , localTxs = []
+                            , localTxs = Empty
                             , confirmedSnapshot = InitialSnapshot testHeadId mempty
                             , seenSnapshot = NoSeenSnapshot
                             , currentDepositTxId = Nothing
@@ -1263,7 +1265,7 @@ inOpenState parties =
     CoordinatedHeadState
       { localUTxO = u0
       , allTxs = mempty
-      , localTxs = mempty
+      , localTxs = Empty
       , confirmedSnapshot
       , seenSnapshot = NoSeenSnapshot
       , currentDepositTxId = Nothing

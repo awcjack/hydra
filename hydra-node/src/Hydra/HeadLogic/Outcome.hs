@@ -94,7 +94,7 @@ data StateChanged tx
       { snapshot :: Snapshot tx
       , requestedTxIds :: [TxIdType tx]
       , newLocalUTxO :: UTxOType tx
-      , newLocalTxs :: [tx]
+      , newLocalTxs :: Seq tx
       , newCurrentDepositTxId :: Maybe (TxIdType tx)
       }
   | PartySignedSnapshot {snapshot :: Snapshot tx, party :: Party, signature :: Signature (Snapshot tx)}

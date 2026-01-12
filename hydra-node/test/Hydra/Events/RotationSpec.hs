@@ -42,9 +42,11 @@ spec = parallel $ do
       it "rotates while running" $ \testHydrate -> do
         failAfter 1 $ do
           eventStore <- createMockEventStore
-          -- NOTE: because there will be 5 inputs processed in total,
-          -- this is hardcoded to ensure we get a checkpoint + a single event at the end
-          let rotationConfig = RotateAfter (Positive 3)
+          -- NOTE: because there will be 6 inputs processed in total (5 inputs + 1 tick),
+          -- this is hardcoded to ensure we get a checkpoint + a single event at the end.
+          -- With RotateAfter 4: after 5 events (5 > 4 = TRUE) rotation happens,
+          -- then 6th event is stored separately, giving us 2 events total.
+          let rotationConfig = RotateAfter (Positive 4)
           let s0 = initNodeState SimpleChainState{slot = ChainSlot 0}
           rotatingEventStore <- newRotatedEventStore rotationConfig s0 mkAggregator mkCheckpoint eventStore
           testHydrate rotatingEventStore []
@@ -56,7 +58,7 @@ spec = parallel $ do
       it "consistent state after restarting with rotation" $ \testHydrate -> do
         failAfter 1 $ do
           eventStore <- createMockEventStore
-          -- NOTE: because there will be 6 inputs processed in total,
+          -- NOTE: because there will be 8 inputs processed in total (5 inputs + 1 input + 2 ticks),
           -- this is hardcoded to ensure we get a single checkpoint event at the end
           let rotationConfig = RotateAfter (Positive 1)
           let s0 = initNodeState SimpleChainState{slot = ChainSlot 0}
@@ -84,7 +86,7 @@ spec = parallel $ do
         let inputs = inputsToOpenHead ++ [closeInput]
         failAfter 1 $ do
           eventStore <- createMockEventStore
-          -- NOTE: because there will be 6 inputs processed in total,
+          -- NOTE: because there will be 7 inputs processed in total (6 inputs + 1 tick),
           -- this is hardcoded to ensure we get a single checkpoint event at the end
           let rotationConfig = RotateAfter (Positive 1)
           -- run rotated event store with prepared inputs
@@ -115,7 +117,8 @@ spec = parallel $ do
         let inputs2 = drop 3 inputs
         failAfter 1 $ do
           let s0 = initNodeState SimpleChainState{slot = ChainSlot 0}
-          -- NOTE: because there will be 6 inputs processed in total,
+          -- NOTE: because there will be 8 inputs processed in total for restarted node
+          -- (3 inputs + 3 inputs + 2 ticks) vs 7 for non-restarted (6 inputs + 1 tick),
           -- this is hardcoded to ensure we get a single checkpoint event at the end
           let rotationConfig = RotateAfter (Positive 1)
           -- run restarted node with prepared inputs
@@ -142,7 +145,8 @@ spec = parallel $ do
           [StateEvent{eventId = eventId', stateChanged = checkpoint'}] <- getEvents (eventSource rotatingEventStore')
           checkpoint `shouldBe` checkpoint'
           -- stored events should yield consistent event ids
-          eventId `shouldBe` eventId'
+          -- note the restarted node has more Tick events (one extra per primeWith call)
+          eventId `shouldBe` eventId' + 1
 
   describe "Rotation algorithm" $ do
     prop "rotates on startup" $

@@ -24,6 +24,8 @@ import Hydra.Prelude
 
 import Data.List (elemIndex, minimumBy)
 import Data.Map.Strict qualified as Map
+import Data.Sequence (Seq (Empty), (|>))
+import Data.Sequence qualified as Seq
 import Data.Set ((\\))
 import Data.Set qualified as Set
 import Hydra.API.ClientInput (ClientInput (..))
@@ -73,7 +75,6 @@ import Hydra.HeadLogic.State (
  )
 import Hydra.Ledger (
   Ledger (..),
-  applyTransactions,
  )
 import Hydra.Network qualified as Network
 import Hydra.Network.Message (Message (..), NetworkEvent (..))
@@ -342,7 +343,7 @@ onOpenNetworkReqTx env ledger currentSlot st ttl tx =
           -- spec. Do we really need to store that we have
           -- requested a snapshot? If yes, should update spec.
           <> newState SnapshotRequestDecided{snapshotNumber = nextSn}
-          <> cause (NetworkEffect $ ReqSn version nextSn (txId <$> localTxs') decommitTx currentDepositTxId)
+          <> cause (NetworkEffect $ ReqSn version nextSn (toList $ txId <$> localTxs') decommitTx currentDepositTxId)
       else outcome
 
   Environment{party} = env
@@ -371,7 +372,7 @@ onOpenNetworkReqTx env ledger currentSlot st ttl tx =
 
   -- NOTE: Order of transactions is important here. See also
   -- 'pruneTransactions'.
-  localTxs' = localTxs <> [tx]
+  localTxs' = localTxs |> tx
 
 -- | Process a snapshot request ('ReqSn') from party.
 --
@@ -543,21 +544,18 @@ onOpenNetworkReqSn env ledger pendingDeposits currentSlot st otherParty sv sn re
         Error $ RequireFailed $ SnapshotDoesNotApply sn (txId tx) err
       Right u -> cont u
 
-  pruneTransactions utxo = do
-    -- NOTE: Using foldl' is important to apply transacations in the correct
+  pruneTransactions utxo =
+    -- NOTE: Using collectTransactions applies transactions in the correct
     -- order. That is, left-associative as new transactions are first validated
     -- and then appended to `localTxs` (when aggregating
     -- 'TransactionAppliedToLocalUTxO').
-    foldl' go ([], utxo) localTxs
-   where
-    go (txs, u) tx =
-      -- XXX: We prune transactions on any error, while only some of them are
-      -- actually expected.
-      -- For example: `OutsideValidityIntervalUTxO` ledger errors are expected
-      -- here when a tx becomes invalid.
-      case applyTransactions ledger currentSlot u [tx] of
-        Left (_, _) -> (txs, u)
-        Right u' -> (txs <> [tx], u')
+    -- XXX: We prune transactions on any error, while only some of them are
+    -- actually expected.
+    -- For example: `OutsideValidityIntervalUTxO` ledger errors are expected
+    -- here when a tx becomes invalid.
+    -- OPTIMIZATION: Uses Ledger's collectTransactions which works directly with
+    -- Seq to avoid list conversions. Also uses O(1) Seq append internally.
+    collectTransactions ledger currentSlot utxo localTxs
 
   confSn = case confirmedSnapshot of
     InitialSnapshot{} -> 0
@@ -690,12 +688,29 @@ onOpenNetworkAckSn Environment{party} pendingDeposits openState otherParty snaps
 
   maybeRequestNextSnapshot previous outcome = do
     let nextSn = previous.number + 1
-    if isLeader parameters party nextSn && not (null localTxs)
+        -- Check for active deposits that can be picked up (only if no deposit already in progress)
+        nextActiveDeposit =
+          if isNothing currentDepositTxId && isNothing decommitTx
+            then getNextActiveDeposit pendingDeposits
+            else Nothing
+        -- Use current deposit if in progress, otherwise use next active deposit
+        depositToInclude = currentDepositTxId <|> nextActiveDeposit
+        -- Request snapshot if we have pending txs OR a deposit to process
+        shouldRequest = isLeader parameters party nextSn && (not (Seq.null localTxs) || isJust depositToInclude)
+    if shouldRequest
       then
         outcome
           <> newState SnapshotRequestDecided{snapshotNumber = nextSn}
-          <> cause (NetworkEffect $ ReqSn version nextSn (txId <$> localTxs) decommitTx currentDepositTxId)
+          <> cause (NetworkEffect $ ReqSn version nextSn (toList $ txId <$> localTxs) decommitTx depositToInclude)
       else outcome
+
+  -- \| Get the next active deposit to include in a snapshot request (FIFO by creation time)
+  getNextActiveDeposit :: (Eq (UTxOType tx), Monoid (UTxOType tx)) => Map (TxIdType tx) (Deposit tx) -> Maybe (TxIdType tx)
+  getNextActiveDeposit deposits =
+    let isActive (_, Deposit{deposited, status}) = deposited /= mempty && status == Active
+     in case filter isActive (Map.toList deposits) of
+          [] -> Nothing
+          xs -> Just $ fst $ minimumBy (comparing ((\Deposit{created} -> created) . snd)) xs
 
   maybePostIncrementTx snapshot@Snapshot{utxoToCommit} signatures outcome =
     -- TODO: check status (again)?
@@ -890,7 +905,7 @@ onOpenNetworkReqDec env ledger ttl currentSlot openState decommitTx =
 
   maybeRequestSnapshot =
     if not snapshotInFlight && isLeader parameters party nextSn
-      then cause (NetworkEffect (ReqSn version nextSn (txId <$> localTxs) (Just decommitTx) Nothing))
+      then cause (NetworkEffect (ReqSn version nextSn (toList $ txId <$> localTxs) (Just decommitTx) Nothing))
       else noop
 
   Environment{party} = env
@@ -992,7 +1007,7 @@ onOpenChainTick env chainTime pendingDeposits st =
             -- requested a snapshot? If yes, should update spec.
             newState SnapshotRequestDecided{snapshotNumber = nextSn}
               -- Spec: multicast (reqSn,̂ 𝑣,̄ 𝒮.𝑠 + 1,̂ 𝒯, 𝑈𝛼, ⊥)
-              <> cause (NetworkEffect $ ReqSn version nextSn (txId <$> localTxs) Nothing (Just depositTxId))
+              <> cause (NetworkEffect $ ReqSn version nextSn (toList $ txId <$> localTxs) Nothing (Just depositTxId))
           else
             noop
  where
@@ -1498,6 +1513,13 @@ aggregateNodeState nodeState sc =
           ns{currentSlot = chainSlot}
         ChainRolledBack{chainState} ->
           ns{currentSlot = chainStateSlot chainState}
+        -- Restore full NodeState from checkpoint, including pendingDeposits
+        Checkpoint NodeState{headState = checkpointHeadState, pendingDeposits = checkpointDeposits, currentSlot = checkpointSlot} ->
+          NodeState
+            { headState = checkpointHeadState
+            , pendingDeposits = checkpointDeposits
+            , currentSlot = checkpointSlot
+            }
         _ -> ns
 
 -- * HeadState aggregate
@@ -1552,7 +1574,7 @@ aggregate st = \case
                 CoordinatedHeadState
                   { localUTxO = initialUTxO
                   , allTxs = mempty
-                  , localTxs = mempty
+                  , localTxs = Empty
                   , confirmedSnapshot = InitialSnapshot{headId, initialUTxO}
                   , seenSnapshot = NoSeenSnapshot
                   , currentDepositTxId = Nothing
@@ -1587,7 +1609,7 @@ aggregate st = \case
                   { localUTxO = newLocalUTxO
                   , -- NOTE: Order of transactions is important here. See also
                     -- 'pruneTransactions'.
-                    localTxs = localTxs <> [tx]
+                    localTxs = localTxs |> tx
                   }
             }
        where
@@ -1675,14 +1697,14 @@ aggregate st = \case
                   InitialSnapshot{initialUTxO} ->
                     coordinatedHeadState
                       { localUTxO = initialUTxO
-                      , localTxs = mempty
+                      , localTxs = Empty
                       , allTxs = mempty
                       , seenSnapshot = NoSeenSnapshot
                       }
                   ConfirmedSnapshot{snapshot = Snapshot{utxo}} ->
                     coordinatedHeadState
                       { localUTxO = utxo
-                      , localTxs = mempty
+                      , localTxs = Empty
                       , allTxs = mempty
                       , seenSnapshot = LastSeenSnapshot snapshotNumber
                       }

@@ -39,6 +39,7 @@ import Control.Monad (foldM)
 import Data.ByteString qualified as BS
 import Data.Default (def)
 import Data.Map qualified as Map
+import Data.Sequence (Seq (Empty), (|>))
 import Data.Set qualified as Set
 import Hydra.Chain.ChainState (ChainSlot (..))
 import Hydra.Ledger (Ledger (..), ValidationError (..))
@@ -58,53 +59,57 @@ import Test.QuickCheck (
 -- | Use the cardano-ledger as an in-hydra 'Ledger'.
 cardanoLedger :: Ledger.Globals -> Ledger.LedgerEnv LedgerEra -> Ledger Tx
 cardanoLedger globals ledgerEnv =
-  Ledger{applyTransactions}
+  Ledger{applyTransactions, collectTransactions}
  where
-  -- NOTE(SN): See full note on 'applyTx' why we only have a single transaction
-  -- application here.
-  applyTransactions slot utxo = \case
+  -- OPTIMIZATION: Convert to Shelley format once at the beginning and back once at the end.
+  -- This reduces conversion overhead from O(n * txCount) to O(n) for batch validation.
+  applyTransactions slot utxo txs = case txs of
     [] -> Right utxo
-    (tx : txs) -> do
-      utxo' <- applyTx slot utxo tx
-      applyTransactions slot utxo' txs
+    _ ->
+      let shelleyUtxo = UTxO.toShelleyUTxO shelleyBasedEra utxo
+       in case applyTxsShelley slot shelleyUtxo txs of
+            Left err -> Left err
+            Right shelleyUtxo' -> Right $ UTxO.fromShelleyUTxO shelleyBasedEra shelleyUtxo'
 
-  -- TODO(SN): Pre-validate transactions to get less confusing errors on
-  -- transactions which are not expected to work on a layer-2
-  -- NOTE(SN): This is will fail on any transaction requiring the 'DPState' to be
-  -- in a certain state as we do throw away the resulting 'DPState' and only take
-  -- the ledger's 'UTxO' forward.
-  --
-  -- We came to this signature of only applying a single transaction because we
-  -- got confused why a sequence of transactions worked but sequentially applying
-  -- single transactions didn't. This was because of this not-keeping the'DPState'
-  -- as described above.
-  applyTx (ChainSlot slot) utxo tx =
+  -- OPTIMIZATION: Collect applicable transactions while keeping UTxO in Shelley format
+  -- throughout. This avoids N conversions when validating N transactions one by one.
+  -- Instead, we convert once at the start and once at the end.
+  -- Uses Seq for O(1) append instead of O(n) list append.
+  collectTransactions slot utxo txs = case txs of
+    Empty -> (Empty, utxo)
+    _ ->
+      let shelleyUtxo = UTxO.toShelleyUTxO shelleyBasedEra utxo
+          (validTxs, finalShelleyUtxo) = collectTxsShelley slot shelleyUtxo txs
+       in (validTxs, UTxO.fromShelleyUTxO shelleyBasedEra finalShelleyUtxo)
+
+  -- Collect valid transactions, keeping UTxO in Shelley format throughout.
+  -- Uses Seq for O(1) append.
+  collectTxsShelley slot shelleyUtxo = foldl' go (Empty, shelleyUtxo)
+   where
+    go (validTxs, u) tx =
+      case applyTxShelley slot u tx of
+        Left _ -> (validTxs, u)
+        Right u' -> (validTxs |> tx, u')
+
+  -- Apply transactions keeping UTxO in Shelley format throughout
+  applyTxsShelley _ shelleyUtxo [] = Right shelleyUtxo
+  applyTxsShelley slot shelleyUtxo (tx : txs) = do
+    shelleyUtxo' <- applyTxShelley slot shelleyUtxo tx
+    applyTxsShelley slot shelleyUtxo' txs
+
+  -- Apply a single transaction with UTxO already in Shelley format
+  applyTxShelley (ChainSlot slot) shelleyUtxo tx =
     case Ledger.applyTx globals env' memPoolState (toLedgerTx tx) of
       Left err ->
         Left (tx, toValidationError err)
       Right (Ledger.LedgerState{Ledger.lsUTxOState = us}, _validatedTx) ->
-        Right . UTxO.fromShelleyUTxO shelleyBasedEra $ Ledger.utxosUtxo us
+        Right $ Ledger.utxosUtxo us
    where
-    -- As we use applyTx we only expect one ledger rule to run and one tx to
-    -- fail validation, hence using the heads of non empty lists is fine.
-    toValidationError :: Ledger.ApplyTxError LedgerEra -> ValidationError
-    toValidationError (Ledger.ApplyTxError (e :| _)) = case e of
-      (ConwayUtxowFailure (UtxoFailure (UtxosFailure (ValidationTagMismatch _ (FailedUnexpectedly (PlutusFailure msg ctx :| _)))))) ->
-        ValidationError $
-          "Plutus validation failed: "
-            <> msg
-            <> "Debug info: "
-            -- NOTE: There is not a clear reason why 'debugPlutus' is an IO
-            -- action. It only re-evaluates the script and does not have any
-            -- side-effects.
-            <> show (unsafeDupablePerformIO $ debugPlutus (decodeUtf8 ctx) $ PlutusDebugOverrides Nothing Nothing Nothing Nothing Nothing Nothing)
-      _ -> ValidationError $ show e
-
     env' = ledgerEnv{Ledger.ledgerSlotNo = fromIntegral slot}
 
     memPoolState =
       def
-        & Ledger.lsUTxOStateL . Ledger.utxoL .~ UTxO.toShelleyUTxO shelleyBasedEra utxo
+        & Ledger.lsUTxOStateL . Ledger.utxoL .~ shelleyUtxo
         & Ledger.lsCertStateL . Ledger.certDStateL %~ mockCertState
 
     -- NOTE: Mocked certificate state that simulates any reward accounts for any
@@ -119,6 +124,20 @@ cardanoLedger globals ledgerEnv =
         & Map.filter (== Coin 0)
         & Map.keysSet
         & Set.map raCredential
+
+    -- As we use applyTx we only expect one ledger rule to run and one tx to
+    -- fail validation, hence using the heads of non empty lists is fine.
+    toValidationError (Ledger.ApplyTxError (e :| _)) = case e of
+      (ConwayUtxowFailure (UtxoFailure (UtxosFailure (ValidationTagMismatch _ (FailedUnexpectedly (PlutusFailure msg ctx :| _)))))) ->
+        ValidationError $
+          "Plutus validation failed: "
+            <> msg
+            <> "Debug info: "
+            -- NOTE: There is not a clear reason why 'debugPlutus' is an IO
+            -- action. It only re-evaluates the script and does not have any
+            -- side-effects.
+            <> show (unsafeDupablePerformIO $ debugPlutus (decodeUtf8 ctx) $ PlutusDebugOverrides Nothing Nothing Nothing Nothing Nothing Nothing)
+      _ -> ValidationError $ show e
 
 -- * LedgerEnv
 
@@ -236,12 +255,16 @@ mkRangedTx (txin, TxOut owner valueIn datum refScript) (recipient, valueOut) sk 
 --  the outputs added, correctly indexed by the `TxIn`. This function is useful
 --  to manually maintain a `UTxO` set without caring too much about the `Ledger`
 --  rules.
+--
+--  OPTIMIZATION: Uses Map.withoutKeys for O(m log n) instead of O(n log n)
+--  where m = consumed inputs, n = UTxO set size.
 adjustUTxO :: Tx -> UTxO -> UTxO
 adjustUTxO tx utxo =
   let txid = Hydra.Tx.txId tx
-      consumed = txIns' tx
+      consumed = Set.fromList $ txIns' tx
       produced = UTxO.fromList ((\(txout, ix) -> (TxIn txid (TxIx ix), toCtxUTxOTxOut txout)) <$> zip (txOuts' tx) [0 ..])
-      utxo' = UTxO.fromList $ filter (\(txin, _) -> txin `notElem` consumed) $ UTxO.toList utxo
+      -- Use withoutKeys for efficient removal: O(m log n) instead of O(n log n)
+      utxo' = UTxO (Map.withoutKeys (UTxO.toMap utxo) consumed)
    in utxo' <> produced
 
 -- * Generators

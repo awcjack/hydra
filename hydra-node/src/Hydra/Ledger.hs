@@ -5,6 +5,7 @@ module Hydra.Ledger where
 
 import Hydra.Prelude
 
+import Data.Sequence (Seq (Empty), (|>))
 import Hydra.Chain.ChainState (ChainSlot (..))
 import Hydra.Tx.IsTx (IsTx (..))
 import Test.QuickCheck.Instances.Natural ()
@@ -18,7 +19,7 @@ nextChainSlot (ChainSlot n) = ChainSlot (n + 1)
 -- | An abstract interface for a 'Ledger'. Allows to define mock / simpler
 -- implementation for testing as well as limiting feature-envy from the business
 -- logic by forcing a closed interface.
-newtype Ledger tx = Ledger
+data Ledger tx = Ledger
   { applyTransactions ::
       ChainSlot ->
       UTxOType tx ->
@@ -28,18 +29,33 @@ newtype Ledger tx = Ledger
   -- validation failures returned from the ledger.
   -- TODO: 'ValidationError' should also include the UTxO, which is not
   -- necessarily the same as the given UTxO after some transactions
+  , collectTransactions ::
+      ChainSlot ->
+      UTxOType tx ->
+      Seq tx ->
+      (Seq tx, UTxOType tx)
+  -- ^ Collect applicable transactions and resulting UTxO. Unlike 'applyTransactions',
+  -- this function continues on validation errors, returning only the valid transactions.
+  -- OPTIMIZATION: Uses Seq for O(1) append. Implementations can optimize this to avoid
+  -- repeated UTxO format conversions when validating transactions one by one.
   }
 
--- | Collect applicable transactions and resulting UTxO. In contrast to
--- 'applyTransactions', this functions continues on validation errors.
-collectTransactions :: Ledger tx -> ChainSlot -> UTxOType tx -> [tx] -> ([tx], UTxOType tx)
-collectTransactions Ledger{applyTransactions} slot utxo =
-  foldr go ([], utxo)
+-- | Default implementation of 'collectTransactions' using 'applyTransactions'.
+-- This is less efficient than specialized implementations as it may perform
+-- repeated format conversions.
+defaultCollectTransactions ::
+  (ChainSlot -> UTxOType tx -> [tx] -> Either (tx, ValidationError) (UTxOType tx)) ->
+  ChainSlot ->
+  UTxOType tx ->
+  Seq tx ->
+  (Seq tx, UTxOType tx)
+defaultCollectTransactions applyTxs slot utxo =
+  foldl' go (Empty, utxo)
  where
-  go tx (applicableTxs, u) =
-    case applyTransactions slot u [tx] of
+  go (applicableTxs, u) tx =
+    case applyTxs slot u [tx] of
       Left _ -> (applicableTxs, u)
-      Right u' -> (applicableTxs <> [tx], u')
+      Right u' -> (applicableTxs |> tx, u')
 
 -- | Either valid or an error which we get from the ledger-specs tx validation.
 data ValidationResult
