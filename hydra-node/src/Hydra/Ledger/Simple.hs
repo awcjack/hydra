@@ -24,6 +24,7 @@ import Hydra.Chain.ChainState (ChainSlot (..), ChainStateType, IsChainState (..)
 import Hydra.Ledger (
   Ledger (..),
   ValidationError (ValidationError),
+  defaultCollectTransactions,
  )
 import Hydra.Tx (IsTx (..))
 
@@ -117,7 +118,7 @@ instance IsChainState SimpleTx where
 
 simpleLedger :: Ledger SimpleTx
 simpleLedger =
-  Ledger{applyTransactions}
+  Ledger{applyTransactions, collectTransactions = defaultCollectTransactions applyTransactions}
  where
   -- NOTE: _slot is unused as SimpleTx transactions don't have a notion of time.
   applyTransactions :: Foldable t => p -> Set SimpleTxOut -> t SimpleTx -> Either (SimpleTx, ValidationError) (Set SimpleTxOut)
