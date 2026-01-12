@@ -8,6 +8,8 @@ import Test.Hydra.Prelude
 
 import Data.List qualified as List
 import Data.Map.Strict qualified as Map
+import Data.Sequence (Seq (Empty))
+import Data.Sequence qualified as Seq
 import Hydra.HeadLogic (CoordinatedHeadState (..), Effect (..), HeadState (..), OpenState (OpenState), Outcome, SeenSnapshot (..), coordinatedHeadState, isLeader, update)
 import Hydra.HeadLogicSpec (StepState, getState, hasEffect, hasEffectSatisfying, hasNoEffectSatisfying, inOpenState, inOpenState', receiveMessage, receiveMessageFrom, runHeadLogic, step)
 import Hydra.Ledger.Simple (SimpleTx (..), aValidTx, simpleLedger, utxoRef)
@@ -55,7 +57,7 @@ spec = do
           CoordinatedHeadState
             { localUTxO = u0
             , allTxs = mempty
-            , localTxs = mempty
+            , localTxs = Empty
             , confirmedSnapshot = InitialSnapshot testHeadId u0
             , seenSnapshot = NoSeenSnapshot
             , currentDepositTxId = Nothing
@@ -85,7 +87,7 @@ spec = do
 
       it "does NOT send ReqSn when we are NOT the leader even if no snapshot in flight" $ do
         let tx = aValidTx 1
-            st = coordinatedHeadState{localTxs = [tx]}
+            st = coordinatedHeadState{localTxs = Seq.singleton tx}
             outcome = update (envFor bobSk) simpleLedger (inOpenState' [alice, bob] st) $ receiveMessageFrom bob $ ReqTx tx
 
         outcome `hasNoEffectSatisfying` sendReqSn
@@ -104,7 +106,7 @@ spec = do
             st' =
               inOpenState' threeParties $
                 coordinatedHeadState
-                  { localTxs = [tx]
+                  { localTxs = Seq.singleton tx
                   , allTxs = Map.singleton (txId tx) tx
                   , localUTxO = u0 <> utxoRef (txId tx)
                   , seenSnapshot = RequestedSnapshot{lastSeen = 0, requested = 1}
@@ -201,7 +203,7 @@ prop_singleMemberHeadAlwaysSnapshotOnReqTx sn = monadicST $ do
       CoordinatedHeadState
         { localUTxO = mempty
         , allTxs = mempty
-        , localTxs = []
+        , localTxs = Empty
         , confirmedSnapshot = sn
         , seenSnapshot
         , currentDepositTxId = Nothing

@@ -58,7 +58,8 @@ import Hydra.HeadLogic (
   Input (..),
   OpenState (..),
  )
-import Hydra.Ledger (Ledger (..), ValidationError (..), collectTransactions)
+import Hydra.HeadLogic.Input (MessagePriority (..), inputPriority)
+import Hydra.Ledger (Ledger (..), ValidationError (..), defaultCollectTransactions)
 import Hydra.Ledger.Cardano (adjustUTxO, fromChainSlot)
 import Hydra.Ledger.Cardano.Evaluate (eraHistoryWithoutHorizon, evaluateTx, renderEvaluationReport)
 import Hydra.Logging (Tracer)
@@ -189,7 +190,7 @@ mockChainAndNetwork tr seedKeys commits = do
             , chainHandler =
                 chainSyncHandler
                   tr
-                  (enqueue . ChainInput)
+                  (enqueue HighPriority . ChainInput)
                   getTimeHandle
                   ctx
                   localChainState
@@ -320,7 +321,9 @@ mockChainAndNetwork tr seedKeys commits = do
           -- UTxO) are silently dropped which emulates the chain behaviour that
           -- only the client is potentially witnessing the failure, and no
           -- invalid transaction will ever be included in the chain.
-          (txs', utxo') = collectTransactions ledger newSlot utxo transactions
+          -- Convert to/from Seq for collectTransactions interface
+          (txsSeq, utxo') = collectTransactions ledger newSlot utxo (Seq.fromList transactions)
+          txs' = toList txsSeq
        in (newSlot, position, blocks :|> (header, txs', utxo'), utxo')
 
 -- | Construct fixed 'TimeHandle' that starts from 0 and has the era horizon far in the future.
@@ -339,7 +342,7 @@ fixedTimeHandleIndefiniteHorizon = do
 scriptLedger ::
   Ledger Tx
 scriptLedger =
-  Ledger{applyTransactions}
+  Ledger{applyTransactions, collectTransactions = defaultCollectTransactions applyTransactions}
  where
   -- XXX: We could easily add 'slot' validation here and this would already
   -- emulate the dropping of outdated transactions from the cardano-node
@@ -375,7 +378,8 @@ createMockNetwork draftNode nodes =
     mapM_ (`handleMessage` msg) allNodes
 
   handleMessage HydraNode{inputQueue} msg = do
-    enqueue inputQueue $ mkNetworkInput sender msg
+    let input = mkNetworkInput sender msg
+    enqueue inputQueue (inputPriority input) input
 
   sender = getParty draftNode
 
