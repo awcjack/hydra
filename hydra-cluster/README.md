@@ -132,48 +132,64 @@ directory containing the benchmark's results.
 
 To run and plot results of the benchmark:
 
+ - Generate the dataset
+
 ```sh
-cabal run bench-e2e -- single --output-directory out"
-bench/plot.sh out
+cabal run bench-e2e -- dataset --number-of-txs 10 --output-directory 1"
+```
+
+ - Run the generated dataset
+
+```sh
+cabal run bench-e2e -- standalone 1/dataset.json --output-directory out"
+./hydra-cluster/bench/plot.sh out
 ```
 
 Which will produce an output like:
 
 ```
-Generating dataset with scaling factor: 10
-Writing dataset to: out/dataset.json
+Reading dataset from: 1/dataset.json
+Running benchmark with datasets: ["1/dataset.json"]
 Test logs available in: out/test.log
 Starting benchmark
 Seeding network
 Fund scenario from faucet
-Fuel node key "16e61ed92346eb0b0bd1c6d8c0f924b4d1278996a61043a0a42afad193e5f3fb"
+Fuel node key "92caede6c58affa96718ab4f47bb34639c135df3a7428aa118b13f25236c02e9"
+Fuel node key "17a705d22d4ee258400067ee7c8c3a314513f24c6271c8524e085049d1fdd449"
+Fuel node key "9951c3506f6f56e3d1871c8a2a0e88e61d32593663f9585e10d3da93b9caec87"
 Publishing hydra scripts
 Starting hydra cluster in out
 Initializing Head
 Committing initialUTxO from dataset
 HeadIsOpen
-Client 1 (node 0): 0/300 (0.00%)
-Client 1 (node 0): 266/300 (88.67%)
+Client 1 (node 0): 1/10 (10.00%)
+Client 2 (node 1): 1/10 (10.00%)
+Client 3 (node 2): 1/10 (10.00%)
+All transactions confirmed. Sweet!
+All transactions confirmed. Sweet!
 All transactions confirmed. Sweet!
 Closing the Head
-Finalizing the Head
 Writing results to: out/results.csv
-Confirmed txs/Total expected txs: 300/300 (100.00 %)
-Average confirmation time (ms): 18.747147496
-P99: 23.100851369999994ms
-P95: 19.81722345ms
-P50: 18.532922ms
+Finalizing the Head
+Confirmed txs/Total expected txs: 30/30 (100.00 %)
+Average confirmation time (ms): 60.917365233
+P99: 74.32681356ms
+P95: 72.72738555ms
+P50: 62.208124ms
 Invalid txs: 0
+Fanout outputs: 3
 Writing report to: out/end-to-end-benchmarks.md
-         line 0: warning: Cannot find or open file "out/system.csv"
-Created plot: out/results.png
+
+./hydra-cluster/bench/plot.sh out-standalone
+         line 0: warning: Cannot find or open file "out-standalone/system.csv"
+Created plot: out-standalone/results.png
 ```
 
 Note that if it's present in the environment, benchmark executable will gather basic system-level statistics about the RAM, CPU, and network bandwidth used. The `plot.sh` script then displays those alongside tx confirmation time in a single graph.
 
 The benchmark can be run in three modes:
 
-* `single`: Generate a single _dataset_ and runs the benchmark with it.
-* `datasets`: Runs one or more pre-existing _datasets_ in sequence and collect their results in a single markdown formatted file. This is useful to track the evolution of hydra-node's performance over some well-known datasets over time and produce a human-readable summary.
+* `standalone`: Benchmark a single or multiple _datasets_.
+* `dataset`: Generates a _dataset_. This is useful to track the evolution of hydra-node's performance over some well-known datasets over time and produce a human-readable summary.
 * `demo`: Generates transactions against an already running network of cardano and hydra nodes. This can serve as a workload when testing network-resilience scenarios, such as packet loss or node failures. See [this CI workflow](https://github.com/cardano-scaling/hydra/blob/master/.github/workflows/network-test.yaml) for how it is used.
 
