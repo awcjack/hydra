@@ -36,9 +36,9 @@ common project-config
     OverloadedStrings
     PartialTypeSignatures
     PatternSynonyms
+    StrictData
     TypeFamilies
     ViewPatterns
-    StrictData
 
   ghc-options:
     -Wall -Wcompat -Widentities -Wincomplete-record-updates
