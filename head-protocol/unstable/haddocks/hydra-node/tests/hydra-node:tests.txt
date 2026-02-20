@@ -174,6 +174,11 @@ knownInputBalance :: Map TxIn TxOut -> Tx LedgerEra -> Value LedgerEra
 -- | NOTE: This does not account for deposits
 outputBalance :: Tx LedgerEra -> Value LedgerEra
 
+-- | Test that coverFee detects missing script witnesses. Generates
+--   transactions that spend from script-locked UTxOs but omit the script
+--   witness.
+prop_detectsMissingScript :: Property
+
 module Hydra.Chain.ScriptRegistrySpec
 spec :: Spec
 
@@ -243,7 +248,7 @@ receiveMessageFrom :: Party -> Message tx -> Input tx
 chainEffect :: PostChainTx SimpleTx -> Effect SimpleTx
 
 -- | Create an observation chain input with chain state at given slot.
-observeTxAtSlot :: Natural -> OnChainTx SimpleTx -> Input SimpleTx
+observeTxAtSlot :: ChainSlot -> OnChainTx SimpleTx -> Input SimpleTx
 
 -- | Create an observation chain input with fixed chain state and slot.
 observeTx :: OnChainTx SimpleTx -> Input SimpleTx
@@ -284,6 +289,9 @@ nowFromSlot :: (MonadFail m, MonadTime m) => ChainSlot -> m UTCTime
 --   EraHistory is constructed to have a horizon sufficiently far in the
 --   future to accommodate time conversions.
 mkTimeHandleAt :: SlotNo -> UTCTime -> TimeHandle
+catchingUp :: IsTx tx => HeadState tx -> NodeState tx
+inSync :: IsTx tx => HeadState tx -> NodeState tx
+zeroChainPointTime :: ChainPointTime
 
 module Hydra.HeadLogicSnapshotSpec
 spec :: Spec
@@ -396,10 +404,6 @@ noopCallback :: Applicative m => NetworkCallback msg m
 -- | Run given <tt>action</tt> in <a>IOSim</a> and rethrow any exceptions.
 shouldRunInSim :: (forall s. IOSim s a) -> IO a
 
--- | Run given <tt>action</tt> in <a>IOSim</a> as a <a>Property</a>
---   including the whole <a>HydraNodeLog</a> trace as a counterexample.
-propRunInSim :: Testable prop => (forall s. IOSim s prop) -> Property
-
 -- | Utility function to dump logs given a <a>SimTrace</a>.
 printTrace :: forall log a. (Typeable log, ToJSON log) => Proxy log -> SimTrace a -> Text
 
@@ -464,7 +468,12 @@ spec :: Spec
 --   <a>Tick</a> is enqueued to advance the chain slot and ensure the
 --   <a>NodeState</a> is in sync. This is returning the node to allow for
 --   chaining with <a>runToCompletion</a>.
-primeWith :: (MonadSTM m, MonadTime m) => [Input tx] -> HydraNode tx m -> m (HydraNode tx m)
+primeWith :: MonadSTM m => [Input tx] -> HydraNode tx m -> m (HydraNode tx m)
+
+-- | A preceding <a>Tick</a> is enqueued to advance the chain slot and
+--   ensure the <a>NodeState</a> is in sync. This is returning the node to
+--   allow for chaining with <a>runToCompletion</a>.
+primeWithTime :: MonadSTM m => HydraNode SimpleTx m -> m (HydraNode SimpleTx m)
 
 -- | Convert a <a>DraftHydraNode</a> to a <a>HydraNode</a> by providing
 --   mock implementations.
@@ -640,7 +649,7 @@ createMockNetwork :: MonadSTM m => DraftHydraNode tx m -> TVar m [HydraNode tx m
 -- | Derive an <a>OnChainTx</a> from <a>PostChainTx</a> to simulate a
 --   "perfect" chain. NOTE: This implementation announces hard-coded
 --   contestationDeadlines. Also, all heads will have the same
---   <a>OpenState</a> and <a>OpenState</a>.
+--   <a>InitialState</a> and <a>InitialState</a>.
 toOnChainTx :: IsTx tx => UTCTime -> PostChainTx tx -> OnChainTx tx
 newDeadlineFarEnoughFromNow :: MonadTime m => m UTCTime
 nothingHappensFor :: (MonadTimer m, MonadThrow m, IsChainState tx) => TestHydraClient tx m -> NominalDiffTime -> m ()
