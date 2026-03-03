@@ -13,7 +13,7 @@ Please note that these results are approximate  as they are currently produced f
 
 :::
 
-_Generated at_  2026-02-20 05:59:09.627711658 UTC
+_Generated at_  2026-03-03 05:34:20.729143897 UTC
 
 
 ## Baseline Scenario
@@ -23,11 +23,12 @@ _Generated at_  2026-02-20 05:59:09.627711658 UTC
 | Number of nodes |  1 | 
 | -- | -- |
 | _Number of txs_ | 300 |
-| _Avg. Confirmation Time (ms)_ | 5.308892876 |
-| _P99_ | 7.146169639999953ms |
-| _P95_ | 6.2418413ms |
-| _P50_ | 5.1203065ms |
+| _Avg. Confirmation Time (ms)_ | 6.194616226 |
+| _P99_ | 10.393744469999998ms |
+| _P95_ | 8.31130215ms |
+| _P50_ | 5.8461245ms |
 | _Number of Invalid txs_ | 0 |
+| _Fanout outputs_        | 1 |
       
 
 ## Three local nodes
@@ -37,9 +38,10 @@ _Generated at_  2026-02-20 05:59:09.627711658 UTC
 | Number of nodes |  3 | 
 | -- | -- |
 | _Number of txs_ | 900 |
-| _Avg. Confirmation Time (ms)_ | 37.388650373 |
-| _P99_ | 63.845098609999994ms |
-| _P95_ | 54.8827012ms |
-| _P50_ | 35.4120185ms |
+| _Avg. Confirmation Time (ms)_ | 33.357118547 |
+| _P99_ | 49.855179490000005ms |
+| _P95_ | 43.64476505ms |
+| _P50_ | 32.3418585ms |
 | _Number of Invalid txs_ | 0 |
+| _Fanout outputs_        | 3 |
       
